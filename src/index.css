@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+}
+/* --- PREMIUM SCROLLBAR STYLES --- */
+
+/* The width of the scrollbar */
+::-webkit-scrollbar {
+  width: 8px;   /* For vertical scrollbars */
+  height: 8px;  /* For horizontal scrollbars */
+}
+
+/* The background of the bar (make it invisible) */
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+
+/* The moving part (thumb) */
+::-webkit-scrollbar-thumb {
+  background: #334155; /* Dark Grey (Slate-700) */
+  border-radius: 10px; /* Rounded corners */
+  border: 2px solid #0a0a0a; /* Padding effect */
+}
+
+/* Hover effect */
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; /* Slightly lighter on hover */
+}
+
+/* For Firefox (different engine) */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0a0a0a;
+}
+/* Utility to hide scrollbar but keep functionality */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
