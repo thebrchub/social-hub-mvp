@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
-interface User {
+export interface User {
   id: string;
-  name: string;
   email: string;
-  // Add other user fields here
+  name?: string;
+  username?: string;
+  avatar_url?: string; // Ensure this is here
+  is_private?: boolean;
+  gender?: string;
+  mobile?: string;
+  karma?: number;
+  show_last_seen?: boolean; // <-- ADD THIS LINE
 }
 
 interface AuthState {
@@ -14,7 +20,7 @@ interface AuthState {
   needsOnboarding: boolean;
   login: (userData: User) => void;
   logout: () => void;
-  completeOnboarding: (details: any) => void;
+  completeOnboarding: (details: Partial<User>) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -27,12 +33,16 @@ export const useAuthStore = create<AuthState>()(
       login: (userData) => set({ 
         isAuthenticated: true, 
         user: userData,
-        // If user doesn't have a gender/dob, send them to onboarding
-        needsOnboarding: true 
+        // If the user doesn't have a username set yet, they need onboarding
+        needsOnboarding: !userData.username 
       }),
 
       logout: () => {
-        localStorage.removeItem('auth-storage'); // Optional: Force clear
+        // Wipe the actual JWT tokens your backend uses
+        localStorage.removeItem('aarpaar_access_token');
+        localStorage.removeItem('aarpaar_refresh_token');
+        localStorage.removeItem('auth-storage'); // Wipe zustand cache
+        
         set({ isAuthenticated: false, user: null, needsOnboarding: false });
       },
 
@@ -42,8 +52,8 @@ export const useAuthStore = create<AuthState>()(
       }))
     }),
     {
-      name: 'auth-storage', // unique name for localStorage key
-      storage: createJSONStorage(() => localStorage), // saves to localStorage
+      name: 'auth-storage', 
+      storage: createJSONStorage(() => localStorage), 
     }
   )
 );
