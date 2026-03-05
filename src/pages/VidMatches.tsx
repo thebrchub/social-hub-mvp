@@ -119,37 +119,57 @@ const VidMatches = () => {
 
   const initLocalStream = async () => {
     if (localStreamRef.current) return localStreamRef.current;
+
+    // CHECK 1: Secure Context Check (The fix for Vercel/Production)
+    if (!window.isSecureContext) {
+      setMediaError({
+        title: "Insecure Connection",
+        desc: "Browsers only allow camera access over HTTPS connections.",
+        action: "Please ensure you are using https:// in your address bar."
+      });
+      return null;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 }, 
+          height: { ideal: 720 },
+          facingMode: "user" // Better for mobile support
+        }, 
+        audio: true 
+      });
+
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       return stream;
+
     } catch (err: any) {
       console.error("Camera/Mic access failed:", err);
       
       // Handle specific WebRTC Errors
-      if (err.name === 'NotFoundError') {
+      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setMediaError({
-          title: "No Camera/Mic Found",
-          desc: "We couldn't detect a webcam or microphone on your device.",
-          action: "Please plug in a camera/mic and try again."
+          title: "Hardware Detection Error",
+          desc: "The browser is reporting that no camera or mic is available. If you are on a laptop/mobile, this usually means permissions were blocked at the system level or the connection isn't secure.",
+          action: "Try refreshing the page or checking your site settings (lock icon)."
         });
-      } else if (err.name === 'NotAllowedError') {
+      } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setMediaError({
           title: "Camera & Mic Required",
-          desc: "We need access to your camera and microphone to connect you with strangers on Zquab.",
-          action: "Please click the lock or permissions icon in your browser's address bar, allow access, and try again."
+          desc: "Access was denied. We need these permissions to connect you with strangers.",
+          action: "Please click the lock icon in the address bar and set Camera/Microphone to 'Allow'."
         });
-      } else if (err.name === 'NotReadableError') {
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
         setMediaError({
-          title: "Camera in Use",
-          desc: "Your camera or microphone is currently being used by another application (like Zoom, Discord, or OBS).",
-          action: "Please close other video apps and try again."
+          title: "Hardware in Use",
+          desc: "Another app is currently using your camera.",
+          action: "Close Zoom, Discord, or other browser tabs using the camera and try again."
         });
       } else {
         setMediaError({
           title: "Hardware Error",
-          desc: "An unexpected error occurred while trying to access your camera.",
+          desc: "An unexpected error occurred while trying to access your hardware.",
           action: err.message || "Please restart your browser and try again."
         });
       }
