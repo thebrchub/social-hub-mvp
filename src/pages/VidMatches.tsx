@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
-import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, MapPin, Loader2, Maximize, Minimize, MessageSquare, MessageSquareOff, X, Columns, Rows } from 'lucide-react';
+import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare, MessageSquareOff, X, Columns, Rows } from 'lucide-react';
 import { useWebSocket } from '../providers/WebSocketProvider';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
