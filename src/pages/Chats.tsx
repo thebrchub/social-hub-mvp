@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
@@ -8,71 +8,31 @@ import { ChatWindow } from '../components/chats/ChatWindow';
 import { ChatGroupWindow } from '../components/chats/ChatGroupWindow'; 
 import { PhoneCall, Loader2 } from 'lucide-react';
 import Modal from '../components/Modal';
+import { useNotificationStore } from '../store/useNotificationStore';
+import { useLocation } from 'react-router-dom';
 
-// --- INTERFACES ---
-// --- INTERFACES ---
-interface RoomMember { 
-  id: string; 
-  name: string; 
-  username: string; 
-  is_online?: boolean; 
-  last_seen_at?: string; 
-  role?: string; 
-  avatar_url?: string; // <-- ADDED THIS
-  avatarUrl?: string;  // <-- ADDED THIS (Fallback)
-}
-
-interface Room { 
-  room_id: string; 
-  name: string | null; 
-  type: string; 
-  last_message_preview: string | null; 
-  last_message_at: string; 
-  unread_count: number; 
-  friend_username?: string; 
-  partner_id?: string; 
-  members?: RoomMember[]; 
-  createdBy?: string; 
-  inviteCode?: string; 
-  avatarUrl?: string; 
-  avatar_url?: string; 
-}
-
-interface DMRequest { 
-  room_id: string; 
-  sender_name?: string; 
-  sender_username?: string; 
-  sender_avatar?: string; 
-  last_message_preview?: string; 
-}
-
-interface ChatMessage { 
-  id?: string; 
-  message_id?: string; 
-  text?: string; 
-  content?: string; 
-  sender_id?: string; 
-  from?: string; 
-  created_at: string; 
-  status?: 'sending' | 'sent' | 'delivered' | 'read'; 
-  _tempId?: string; 
-  type?: string; 
-}
+interface RoomMember { id: string; name: string; username: string; is_online?: boolean; last_seen_at?: string; role?: string; avatar_url?: string; avatarUrl?: string; }
+interface Room { room_id: string; name: string | null; type: string; last_message_preview: string | null; last_message_at: string; unread_count: number; friend_username?: string; partner_id?: string; members?: RoomMember[]; createdBy?: string; inviteCode?: string; avatarUrl?: string; avatar_url?: string; }
+interface DMRequest { room_id: string; sender_name?: string; sender_username?: string; sender_avatar?: string; sender_id?: string; last_message_preview?: string; last_message_at?: string; }
+interface GroupInvite { roomId: string; groupName: string; avatarUrl?: string; invitedBy: string; inviterName: string; invitedAt: string; }
+interface ChatMessage { id?: string; message_id?: string; text?: string; content?: string; sender_id?: string; from?: string; created_at: string; status?: 'sending' | 'sent' | 'delivered' | 'read'; _tempId?: string; type?: string; }
 
 export default function Chats() {
   const user = useAuthStore(state => state.user);
+  const location = useLocation();
   const { sendMessage, sendRaw, sendTypingStart, markRead, markDelivered, isConnected, subscribe } = useWebSocket();
 
-  const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'} | null>(null);
+  const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'|'warning'} | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<{title: string, desc: string, onConfirm: ()=>void} | null>(null);
 
-  // Custom Report Modal State
   const [reportConfig, setReportConfig] = useState<{username: string, roomId: string} | null>(null);
   const [reportReason, setReportReason] = useState("");
   const [isReporting, setIsReporting] = useState(false);
 
   const [rooms, setRooms] = useState<Room[]>([]);
   const [requests, setRequests] = useState<DMRequest[]>([]);
+  const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const [callHistory, setCallHistory] = useState<any[]>([]); 
   const [isLoadingSidebar, setIsLoadingSidebar] = useState(true);
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -100,13 +60,14 @@ export default function Chats() {
   const hasSentInitialDelivery = useRef(false);
   const wsRef = useRef<any>(null); 
 
-  const [activeTab, setActiveTab] = useState<'chats' | 'requests'>('chats');
+  const [activeTab, setActiveTab] = useState<'chats' | 'requests' | 'calls'>('chats');
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const selectedRoomIdRef = useRef<string | null>(null);
+  selectedRoomIdRef.current = selectedRoomId;
   const [inputValue, setInputValue] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  // Group Modal States
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupDesc, setGroupDesc] = useState("");
@@ -114,7 +75,6 @@ export default function Chats() {
   const [isPrivateGroup, setIsPrivateGroup] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
 
-  // --- CALLING STATES (WebRTC P2P) ---
   const [incomingCall, setIncomingCall] = useState<any>(null);
   const [activeCall, setActiveCall] = useState<any>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -125,17 +85,47 @@ export default function Chats() {
   const [callMicOff, setCallMicOff] = useState(false);
   const [callCamOff, setCallCamOff] = useState(false);
 
+  const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const userMap = useMemo(() => {
+     const map: Record<string, any> = {};
+     rooms.forEach(r => {
+        r.members?.forEach(m => {
+           map[m.id] = m;
+           map[m.username] = m;
+        });
+     });
+     return map;
+  }, [rooms]);
+
   const wsSendSignaling = (payload: any) => {
       if (sendRaw) sendRaw(payload);
-      else console.error("sendRaw not found in WebSocketProvider!");
   };
 
   const playSound = (type: 'message' | 'ring') => {
-      const audio = new Audio(type === 'message' ? '/message.mp3' : '/ringtone.mp3');
-      audio.play().catch(() => {});
+      if (type === 'ring') {
+         if (!ringtoneAudioRef.current) {
+            ringtoneAudioRef.current = new Audio('/ringtone.mp3');
+            ringtoneAudioRef.current.loop = true;
+         }
+         ringtoneAudioRef.current.play().catch(() => {});
+      } else {
+         const audio = new Audio('/message.mp3');
+         audio.play().catch(() => {});
+      }
   };
 
-  const showToast = (msg: string, type: 'success'|'error'|'info' = 'success') => {
+  const stopRingtone = () => {
+      if (ringtoneAudioRef.current) {
+          const audio = ringtoneAudioRef.current;
+          audio.pause();
+          audio.currentTime = 0;
+          audio.src = ''; 
+          ringtoneAudioRef.current = null;
+      }
+  };
+
+  const showToast = (msg: string, type: 'success'|'error'|'info'|'warning' = 'success') => {
       setToastMessage({msg, type});
       setTimeout(() => setToastMessage(null), 3000);
   };
@@ -147,14 +137,14 @@ export default function Chats() {
     const diffMins = Math.floor((Date.now() - date.getTime()) / 60000);
     if (diffMins < 1) return 'just now';
     if (diffMins < 60) return `${diffMins} min ago`;
-    return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `${date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })} at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
   };
 
   const formatTime = (isoString: string) => {
     if (!isoString) return '';
     const date = new Date(isoString);
-    if (date.toDateString() === new Date().toDateString()) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    if (date.toDateString() === new Date().toDateString()) return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   };
 
   const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
@@ -168,35 +158,37 @@ export default function Chats() {
 
   const fetchChatsData = async () => {
     try {
-      const [roomsRes, requestsRes] = await Promise.all([
+      const [roomsRes, requestsRes, invitesRes, historyRes] = await Promise.all([
         api.get('/rooms?limit=50').catch(() => []),
-        api.get('/rooms/requests').catch(() => [])
+        api.get('/rooms/requests').catch(() => []),
+        api.get('/groups/invites').catch(() => []),
+        api.get('/calls/history?limit=30').catch(() => []) 
       ]);
       
       let fetchedRooms = Array.isArray(roomsRes) ? roomsRes : roomsRes?.data || [];
       const fetchedReqs = Array.isArray(requestsRes) ? requestsRes : requestsRes?.data || [];
+      const fetchedInvites = Array.isArray(invitesRes) ? invitesRes : invitesRes?.data || [];
+      
+      const histData = historyRes?.data || historyRes;
+      const fetchedHistory = Array.isArray(histData) ? histData : (histData?.calls || histData?.data || []);
+
       setRequests(fetchedReqs);
+      setGroupInvites(fetchedInvites);
+      setCallHistory(fetchedHistory);
 
       fetchedRooms = fetchedRooms.map((room: any) => {
-         // 1. Handle DMs
          if ((room.type === 'DM' || room.type === 'private') && room.members) {
              const partner = room.members.find((m: any) => m.id !== user?.id);
              if (partner) {
                  room.name = partner.name || partner.username;
                  room.friend_username = partner.username;
                  room.partner_id = partner.id;
-                 
-                 // THE FIX: Pull the avatar from the member array and map it to the room object
                  const pAvatar = partner.avatar_url || partner.avatarUrl;
                  room.avatar_url = pAvatar;
                  room.avatarUrl = pAvatar; 
-                 
                  setPresence(prev => ({ ...prev, [partner.id]: { online: partner.is_online || false, lastSeen: partner.last_seen_at || null } }));
              }
-         } 
-         // 2. Handle Groups
-         else if (room.type === 'group' || room.type === 'GROUP') {
-             // THE FIX: Pull group_avatar (based on your Swagger JSON) and map it
+         } else if (room.type === 'group' || room.type === 'GROUP') {
              const gAvatar = room.group_avatar || room.avatarUrl || room.avatar_url;
              room.avatar_url = gAvatar;
              room.avatarUrl = gAvatar;
@@ -204,14 +196,18 @@ export default function Chats() {
          return room;
       });
 
+      const totalUnread = fetchedRooms.reduce((acc: number, r: any) => acc + (r.unread_count || 0), 0);
+      useNotificationStore.getState().setUnreadChatsCount(totalUnread);
       setRooms(fetchedRooms);
-    } catch (error) { 
-      console.error("Failed to fetch chats data:", error); 
-    } finally { 
-      setIsLoadingSidebar(false); 
-    }
+
+      if (location.state?.autoOpenRoomId) {
+         setSelectedRoomId(location.state.autoOpenRoomId);
+         window.history.replaceState({}, document.title) 
+      }
+    } catch (error) { console.error("Failed to fetch chats data:", error); } finally { setIsLoadingSidebar(false); }
   };
 
+  useEffect(() => { fetchChatsData(); }, [location.state?.autoOpenRoomId]); 
   useEffect(() => { fetchChatsData(); }, []);
 
   useEffect(() => {
@@ -222,8 +218,14 @@ export default function Chats() {
   }, [isConnected, rooms]);
 
   const fetchMessages = async (roomId: string, loadOlder = false) => {
-    if (!loadOlder) { setIsMessagesLoading(true); setMessageCursor(null); } 
-    else { setIsLoadingOlder(true); }
+    if (!loadOlder) { 
+        setIsMessagesLoading(true); 
+        setMessageCursor(null); 
+        // --- FIX: INSTANT UI CLEAR TO PREVENT CHAT BLEEDING ---
+        setMessages([]); 
+    } else { 
+        setIsLoadingOlder(true); 
+    }
 
     try {
       let url = `/rooms/${roomId}/messages?limit=50`;
@@ -250,15 +252,41 @@ export default function Chats() {
          triggerMarkRead(roomId);
          setRooms(prev => prev.map(r => r.room_id === roomId ? { ...r, unread_count: 0 } : r));
       }
-    } catch (error) { console.error("Failed to fetch messages:", error); } 
-    finally { setIsMessagesLoading(false); setIsLoadingOlder(false); }
+    } catch (error) { 
+        console.error("Failed to fetch messages:", error); 
+        
+        // --- FIX: INJECT PENDING REQUEST PREVIEW MESSAGE IF API FAILS ---
+        if (!loadOlder) {
+            const pendingReq = requests.find(r => r.room_id === roomId);
+            if (pendingReq && pendingReq.last_message_preview) {
+                setMessages([{
+                    id: 'preview',
+                    text: pendingReq.last_message_preview,
+                    sender_id: pendingReq.sender_id || 'unknown',
+                    from: pendingReq.sender_id || 'unknown',
+                    created_at: pendingReq.last_message_at || new Date().toISOString(),
+                    status: 'delivered'
+                } as any]);
+            } else {
+                setMessages([]);
+            }
+        }
+    } finally { 
+        setIsMessagesLoading(false); 
+        setIsLoadingOlder(false); 
+    }
   };
 
   useEffect(() => {
-    if (!selectedRoomId) return;
+    if (!selectedRoomId) {
+        setMessages([]); // Double ensure clean slate if null
+        return;
+    }
     setIsSearchingMessages(false); setMessageSearchQuery("");
     setShowInfoPanel(false); setShowEmojiPicker(false);
     setTypingData(null);
+    // Instant clear when ID changes
+    setMessages([]);
     fetchMessages(selectedRoomId, false);
   }, [selectedRoomId, isConnected]); 
 
@@ -287,57 +315,91 @@ export default function Chats() {
       if (parsed.type === 'presence_online') setPresence(prev => ({ ...prev, [parsed.userId]: { online: true, lastSeen: null }}));
       if (parsed.type === 'presence_offline') setPresence(prev => ({ ...prev, [parsed.userId]: { online: false, lastSeen: parsed.lastSeenAt }}));
 
-      if (parsed.type === 'typing_status' && parsed.roomId === selectedRoomId && !parsed.userIds.includes(user?.id)) {
+      if (parsed.type === 'typing_status' && parsed.roomId === selectedRoomIdRef.current && !parsed.userIds.includes(user?.id)) {
          setTypingData({ roomId: parsed.roomId, userIds: parsed.userIds });
          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
          typingTimeoutRef.current = setTimeout(() => setTypingData(null), 3000); 
       }
 
+      if (parsed.type === 'group_invite') { showToast(`You were invited to join ${parsed.groupName || 'a squad'}!`, "info"); fetchChatsData(); }
+      if (parsed.type === 'group_invite_accepted') {
+         fetchChatsData(); 
+         if (parsed.roomId === selectedRoomIdRef.current) fetchRoomDetails(parsed.roomId, 'group');
+      }
+
       if (parsed.type === 'send_message') {
          const incomingText = parsed.text || parsed.content || "New message";
-         if (parsed.from !== user?.id && parsed.roomId !== selectedRoomId) playSound('message');
+         const targetRoomId = String(parsed.roomId || parsed.room_id);
+         const currentRoomId = String(selectedRoomIdRef.current);
+         const isMe = String(parsed.from) === String(user?.id);
+
+         const isCurrentlyLookingAtThisChat = document.visibilityState === 'visible' && targetRoomId === currentRoomId;
+         if (!isMe && !isCurrentlyLookingAtThisChat) {
+             playSound('message');
+         }
 
          setRooms(prev => {
             let updated = prev.map(r => {
-               if (r.room_id === parsed.roomId) {
-                  const isNotActive = parsed.roomId !== selectedRoomId;
-                  const newUnreadCount = (isNotActive && parsed.from !== user?.id) ? (r.unread_count || 0) + 1 : r.unread_count;
+               if (String(r.room_id) === targetRoomId) {
+                  const newUnreadCount = (!isCurrentlyLookingAtThisChat && !isMe) ? (r.unread_count || 0) + 1 : r.unread_count;
                   return { ...r, last_message_preview: incomingText, last_message_at: new Date().toISOString(), unread_count: newUnreadCount };
                }
                return r;
             });
-            const targetIdx = updated.findIndex(r => r.room_id === parsed.roomId);
+            const targetIdx = updated.findIndex(r => String(r.room_id) === targetRoomId);
             if (targetIdx > 0) { const [target] = updated.splice(targetIdx, 1); updated.unshift(target); }
             return updated;
          });
 
-         if (parsed.from === user?.id) {
+         if (isMe) {
             setMessages(prev => prev.map(m => (m.status === 'sending' && (m.text === incomingText || m.content === incomingText)) ? { ...m, status: 'sent', id: parsed.id } : m));
-         } else if (parsed.roomId === selectedRoomId) {
+         } else if (targetRoomId === currentRoomId) {
              setMessages(prev => {
-                if (prev.some(m => m.id === parsed.id || (parsed.tempId && m._tempId === parsed.tempId))) return prev;
+                if (parsed.id && prev.some(m => m.id === parsed.id)) return prev;
+                if (parsed.tempId && prev.some(m => m._tempId === parsed.tempId)) return prev;
                 return [...prev, { id: parsed.id || parsed.tempId || Date.now().toString(), sender_id: parsed.from, text: incomingText, created_at: new Date().toISOString(), status: 'read', type: parsed.msgType || 'chat' }];
              });
-             if (isConnected) triggerMarkRead(parsed.roomId);
-             setTimeout(() => scrollToBottom("smooth"), 50);
+             if (isConnected) triggerMarkRead(targetRoomId);
+             setTimeout(() => scrollToBottom("auto"), 10); 
          } else {
-             if (isConnected && markDelivered) markDelivered(parsed.roomId);
+             if (isConnected && markDelivered) markDelivered(targetRoomId);
+             useNotificationStore.getState().setUnreadChatsCount(useNotificationStore.getState().unreadChatsCount + 1);
+             const isFriendRoom = rooms.some((r: any) => String(r.room_id) === targetRoomId);
+             if (!isFriendRoom) {
+                 showToast("New message request received!", "info");
+                 fetchChatsData();
+             }
          }
       }
 
-      if (parsed.type === 'message_sent_confirm') {
-         setMessages(prev => prev.map(m => m._tempId === parsed.tempId ? { ...m, status: (m.status === 'delivered' || m.status === 'read') ? m.status : 'sent', id: parsed.id } : m));
+      if (parsed.type === 'message_sent_confirm') setMessages(prev => prev.map(m => m._tempId === parsed.tempId ? { ...m, status: (m.status === 'delivered' || m.status === 'read') ? m.status : 'sent', id: parsed.id } : m));
+      if (parsed.type === 'message_delivered' && String(parsed.roomId) === String(selectedRoomIdRef.current) && String(parsed.userId) !== String(user?.id)) {
+         setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && (m.status === 'sending' || m.status === 'sent' || !m.status)) ? { ...m, status: 'delivered' } : m));
       }
-      if (parsed.type === 'message_delivered' && parsed.roomId === selectedRoomId && parsed.userId !== user?.id) {
-         setMessages(prev => prev.map(m => ((m.sender_id === user?.id || m.from === user?.id) && (m.status === 'sending' || m.status === 'sent' || !m.status)) ? { ...m, status: 'delivered' } : m));
-      }
-      if (parsed.type === 'message_read' && parsed.roomId === selectedRoomId && Date.now() - lastMarkReadTime.current > 2000 && parsed.userId !== user?.id) {
-         setMessages(prev => prev.map(m => ((m.sender_id === user?.id || m.from === user?.id) && m.status !== 'read') ? { ...m, status: 'read' } : m));
+      if (parsed.type === 'message_read' && String(parsed.roomId) === String(selectedRoomIdRef.current) && Date.now() - lastMarkReadTime.current > 2000 && String(parsed.userId) !== String(user?.id)) {
+         setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && m.status !== 'read') ? { ...m, status: 'read' } : m));
       }
 
       if (parsed.type === 'call_ring') { playSound('ring'); setIncomingCall(parsed); }
-      if (parsed.type === 'call_reject') { showToast(`Call ${parsed.reason || 'declined'}`, 'info'); endActiveCall(); }
+      
+      if (parsed.type === 'call_reject' || parsed.type === 'call_end' || parsed.type === 'call_dismiss' || parsed.type === 'error') {
+          stopRingtone();
+          setIncomingCall(null);
+          
+          if (parsed.type === 'call_reject') showToast(`Call ${parsed.reason || 'declined'}`, 'error');
+          if (parsed.type === 'call_end') showToast('Call ended', 'warning');
+          if (parsed.type === 'error') {
+              showToast(parsed.message || "Action not allowed", "error");
+              if (!parsed.message?.toLowerCase().includes("call friends")) return; 
+          }
+          
+          endActiveCall();
+          fetchChatsData(); 
+      }
+
       if (parsed.type === 'call_accept') {
+          stopRingtone();
+          setActiveCall((prev: any) => prev ? { ...prev, isAccepted: true } : prev);
           if (pcRef.current) return;
           const pc = await initPeerConnection(parsed.from, parsed.callId);
           const offer = await pc.createOffer();
@@ -365,18 +427,16 @@ export default function Chats() {
           if (pcRef.current && pcRef.current.remoteDescription) pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
           else iceCandidateQueue.current.push(candidate);
       }
-      if (parsed.type === 'call_end') { showToast('Call ended', 'info'); endActiveCall(); }
     });
     return unsubscribe;
-  }, [selectedRoomId, user?.id, isConnected, subscribe, markDelivered, markRead]);
+  }, [user?.id, isConnected, subscribe, markDelivered, markRead]);
 
-
-  // ------------------------------------------------------------------
-  // WEBRTC PEER CONNECTION LOGIC
-  // ------------------------------------------------------------------
   const getMedia = async (video: boolean) => {
       try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: video ? { width: { ideal: 1280 } } : false });
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+              video: video ? { width: { ideal: 1280 } } : false 
+          });
           localStreamRef.current = stream;
           if (localVideoRef.current) localVideoRef.current.srcObject = stream;
           return stream;
@@ -391,7 +451,13 @@ export default function Chats() {
       pcRef.current = pc;
       iceCandidateQueue.current = [];
       pc.onicecandidate = (e) => { if (e.candidate) wsSendSignaling({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); };
-      pc.ontrack = (e) => { if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== e.streams[0]) remoteVideoRef.current.srcObject = e.streams[0]; };
+      pc.ontrack = (e) => { 
+          const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
+          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== stream) {
+              remoteVideoRef.current.srcObject = stream;
+              remoteVideoRef.current.play().catch(console.error); 
+          } 
+      };
       pc.oniceconnectionstatechange = () => { if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') endActiveCall(); };
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
       return pc;
@@ -400,18 +466,17 @@ export default function Chats() {
   const handleStartCall = async (type: 'audio' | 'video', isGroupCall: boolean) => {
       if (!selectedRoomId) return;
       if (isGroupCall) return; 
-      
       const targetRoom = rooms.find(r => r.room_id === selectedRoomId);
-      if (!targetRoom || !targetRoom.partner_id) return; // TS Guard
-      
+      if (!targetRoom || !targetRoom.partner_id) return; 
       const stream = await getMedia(type === 'video');
       if (!stream) return;
       const callId = `call_${Date.now()}`;
-      setActiveCall({ id: callId, roomId: selectedRoomId, peerName: targetRoom.name || 'User', isVideo: type === 'video', peerId: targetRoom.partner_id });
+      setActiveCall({ id: callId, roomId: selectedRoomId, peerName: targetRoom.name || 'User', isVideo: type === 'video', peerId: targetRoom.partner_id, isAccepted: false });
       wsSendSignaling({ type: 'call_ring', to: targetRoom.partner_id, callId, roomId: selectedRoomId, callType: type, hasVideo: type === 'video' });
   };
 
   const acceptIncomingCall = async (resolvedName: string) => {
+      stopRingtone();
       const parsed = incomingCall;
       setIncomingCall(null);
       const stream = await getMedia(parsed.hasVideo);
@@ -419,16 +484,18 @@ export default function Chats() {
          wsSendSignaling({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' });
          return;
       }
-      setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: resolvedName, isVideo: parsed.hasVideo, peerId: parsed.from });
+      setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: resolvedName, isVideo: parsed.hasVideo, peerId: parsed.from, isAccepted: true });
       wsSendSignaling({ type: 'call_accept', to: parsed.from, callId: parsed.callId });
   };
 
   const rejectIncomingCall = () => {
+      stopRingtone();
       wsSendSignaling({ type: 'call_reject', to: incomingCall.from, callId: incomingCall.callId, reason: 'rejected' });
       setIncomingCall(null);
   };
 
   const endActiveCall = () => {
+      stopRingtone();
       if (activeCall && activeCall.peerId) wsSendSignaling({ type: 'call_end', to: activeCall.peerId, callId: activeCall.id });
       if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
@@ -436,9 +503,26 @@ export default function Chats() {
       setActiveCall(null);
   };
 
-  // ------------------------------------------------------------------
-  // UI HANDLERS
-  // ------------------------------------------------------------------
+  const handleCallLogClick = async (call: any) => {
+      const isOutgoing = String(call.initiatedBy) === String(user?.id);
+      const otherId = isOutgoing ? (call.peerId || call.receiverId || call.to || call.partner_id) : call.initiatedBy;
+      
+      const knownUser = userMap[otherId] || Object.values(userMap).find(u => u.name === call.callerName || u.name === call.peerName);
+      const targetUsername = knownUser?.username || call.callerUsername || call.peerUsername;
+
+      if (targetUsername) {
+          try {
+              const res = await api.post('/rooms', { username: targetUsername });
+              setSelectedRoomId(res.data?.room_id || res.data?.id);
+              setActiveTab('chats');
+          } catch (e) {
+              showToast("Failed to open chat", "error");
+          }
+      } else {
+          showToast("User details not found to start chat", "error");
+      }
+  };
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim() || !selectedRoomId) return;
@@ -468,12 +552,38 @@ export default function Chats() {
 
   const onEmojiClick = (emojiObject: any) => setInputValue((prev) => prev + emojiObject.emoji);
 
-  const activeRoom = rooms.find(r => r.room_id === selectedRoomId);
+  let isRequest = false;
+  let activeRoom = rooms.find(r => r.room_id === selectedRoomId);
+  
+  if (!activeRoom && selectedRoomId) {
+      const req = requests.find(r => r.room_id === selectedRoomId);
+      if (req) {
+          isRequest = true;
+          activeRoom = {
+              room_id: req.room_id,
+              type: 'DM',
+              name: req.sender_name,
+              friend_username: req.sender_username,
+              avatar_url: req.sender_avatar,
+              partner_id: req.sender_username,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0
+          } as Room;
+      }
+  }
 
-  // --- THE FIX: BULLETPROOF TYPESCRIPT & INSTANT STATE UPDATES ---
+  const handleGroupInviteAction = async (groupId: string, action: 'accept' | 'decline') => {
+    try {
+      await api.post(`/groups/${groupId}/invites/${action}`);
+      await fetchChatsData();
+      if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(groupId); }
+      showToast(`Squad invite ${action}ed!`, 'success');
+    } catch (error: any) { showToast(`Failed to ${action} invite`, 'error'); }
+  };
+
   const handlePanelAction = async (action: string, payload?: any) => {
       setShowInfoPanel(false); 
-      if (!selectedRoomId || !activeRoom) return; // Strict TS Guard!
+      if (!selectedRoomId || !activeRoom) return; 
       
       const isGroup = activeRoom.type === 'group' || activeRoom.type === 'GROUP';
       const targetRoomId = selectedRoomId;
@@ -496,90 +606,52 @@ export default function Chats() {
               case 'leave_group':
                   setConfirmConfig({ title: "Leave Squad", desc: `Are you sure you want to leave ${targetName}?`, onConfirm: async () => { 
                       await api.delete(`/groups/${targetRoomId}/members/${user?.id}`); 
-                      setSelectedRoomId(null); 
-                      setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); 
-                      setConfirmConfig(null); 
-                      showToast("Left squad.", "info"); 
-                  }});
-                  break;
+                      setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Left squad.", "info"); 
+                  }}); break;
               case 'delete_group':
                   setConfirmConfig({ title: "Delete Squad", desc: "DANGER: This permanently deletes the group for everyone. Proceed?", onConfirm: async () => { 
                       await api.delete(`/groups/${targetRoomId}`); 
-                      setSelectedRoomId(null); 
-                      setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); 
-                      setConfirmConfig(null); 
-                      showToast("Squad deleted.", "info"); 
-                  }});
-                  break;
+                      setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Squad deleted.", "info"); 
+                  }}); break;
               case 'remove_member':
                   setConfirmConfig({ title: "Kick Member", desc: "Are you sure you want to kick this user?", onConfirm: async () => { 
                       await api.delete(`/groups/${targetRoomId}/members/${payload}`); 
-                      fetchRoomDetails(targetRoomId, 'group'); 
-                      setConfirmConfig(null); 
-                      showToast("Member kicked.", "success"); 
-                  }});
-                  break;
+                      fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Member kicked.", "success"); 
+                  }}); break;
               case 'promote_admin':
                   setConfirmConfig({ title: "Promote to Admin", desc: "Give this user admin privileges?", onConfirm: async () => { 
                       await api.post(`/groups/${targetRoomId}/admins`, { userId: payload }); 
-                      fetchRoomDetails(targetRoomId, 'group'); 
-                      setConfirmConfig(null); 
-                      showToast("Promoted to admin.", "success"); 
-                  }});
-                  break;
+                      fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Promoted to admin.", "success"); 
+                  }}); break;
           }
       } else {
           switch(action) {
-              case 'mute_notifications':
-                  showToast("Mute feature coming soon!", "info");
-                  break;
+              case 'mute_notifications': showToast("Mute feature coming soon!", "info"); break;
               case 'remove':
                   if (!targetUsername) return showToast("Cannot remove unknown user", "error");
                   setConfirmConfig({ 
-                      title: "Remove Friend", 
-                      desc: `Are you sure you want to remove @${targetUsername}? If you remove them, your chats will be gone forever and cannot be retrieved.`, 
+                      title: "Remove Friend", desc: `Are you sure you want to remove @${targetUsername}? If you remove them, your chats will be gone forever and cannot be retrieved.`, 
                       onConfirm: async () => { 
                           try {
-                              // Ignore 'Not friends' error if they were just a stranger match
-                              await api.delete(`/friends/${targetUsername}`).catch(e => {
-                                  if (e.message && !e.message.includes('Not friends')) throw e;
-                              }); 
+                              await api.delete(`/friends/${targetUsername}`).catch(e => { if (e.message && !e.message.includes('Not friends')) throw e; }); 
                               await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-                              setSelectedRoomId(null); 
-                              setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); 
-                              setConfirmConfig(null); 
-                              showToast("Friend removed and chat deleted.", "success"); 
-                          } catch (e: any) {
-                              setConfirmConfig(null);
-                              showToast(e.message || "Failed to remove friend.", "error"); 
-                          }
+                              setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Friend removed and chat deleted.", "success"); 
+                          } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to remove friend.", "error"); }
                       }
-                  });
-                  break;
+                  }); break;
               case 'block':
                   setConfirmConfig({ 
-                      title: "Block User", 
-                      desc: "They will no longer be able to message you. This chat will be deleted.", 
+                      title: "Block User", desc: "They will no longer be able to message you. This chat will be deleted.", 
                       onConfirm: async () => { 
                           try {
                               await api.post('/match/action', { room_id: targetRoomId, action: 'block', partner_username: targetUsername }); 
                               await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-                              setSelectedRoomId(null); 
-                              setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); 
-                              setConfirmConfig(null); 
-                              showToast("User blocked.", "success"); 
-                          } catch (e: any) {
-                              setConfirmConfig(null); 
-                              showToast(e.message || "Failed to block user.", "error");
-                          }
+                              setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("User blocked.", "success"); 
+                          } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to block user.", "error"); }
                       }
-                  });
-                  break;
+                  }); break;
               case 'report':
-                  if (targetUsername) {
-                      setReportConfig({ username: targetUsername, roomId: targetRoomId });
-                  }
-                  break;
+                  if (targetUsername) setReportConfig({ username: targetUsername, roomId: targetRoomId }); break;
           }
       }
   };
@@ -589,23 +661,11 @@ export default function Chats() {
       if (!reportConfig || !reportReason.trim()) return;
       setIsReporting(true);
       try {
-          await api.post('/match/report', { 
-              reported_username: reportConfig.username, 
-              reason: reportReason.trim(), 
-              room_id: reportConfig.roomId 
-          });
+          await api.post('/match/report', { reported_username: reportConfig.username, reason: reportReason.trim(), room_id: reportConfig.roomId });
           const targetRoomId = reportConfig.roomId;
           await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-          setSelectedRoomId(null);
-          setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); 
-          setReportConfig(null);
-          setReportReason("");
-          showToast("Report submitted successfully. The user has been blocked.", "success");
-      } catch (err: any) {
-          showToast(err.message || "Failed to submit report.", "error");
-      } finally {
-          setIsReporting(false);
-      }
+          setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setReportConfig(null); setReportReason(""); showToast("Report submitted successfully. The user has been blocked.", "success");
+      } catch (err: any) { showToast(err.message || "Failed to submit report.", "error"); } finally { setIsReporting(false); }
   };
 
   const handleCreateDMOrJoin = async (e: React.FormEvent) => {
@@ -615,8 +675,9 @@ export default function Chats() {
     setIsCreating(true);
     try {
       if (input.startsWith('inv_') || input.length > 15) {
-         await api.post(`/invite/${input}`);
-         showToast("Joined group successfully!", 'success');
+         const actualCode = input.startsWith('inv_') ? input.replace('inv_', '') : input;
+         await api.post(`/invite/${actualCode}`);
+         showToast("Joined squad successfully!", 'success');
          await fetchChatsData();
       } else {
          const res = await api.post('/rooms', { username: input });
@@ -625,7 +686,13 @@ export default function Chats() {
          else { await fetchChatsData(); setSelectedRoomId(data.room_id); setActiveTab('chats'); }
       }
       setNewUsername('');
-    } catch (error: any) { showToast(error.message || "Failed to add", 'error'); } 
+    } catch (error: any) { 
+      const status = error.response?.status || error.status;
+      const msg = error.response?.data?.message || error.message || "";
+      if (msg.toLowerCase().includes('already')) showToast("You are already a member of this squad!", 'info');
+      else if (status === 403 || msg.toLowerCase().includes('private')) showToast("This user has a private account. Send a friend request first.", 'error');
+      else showToast(msg || "Failed to start chat", 'error'); 
+    } 
     finally { setIsCreating(false); }
   };
 
@@ -657,18 +724,19 @@ export default function Chats() {
     if (!isSearchingMessages || !messageSearchQuery.trim()) return text;
     const query = messageSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
     const parts = text.split(new RegExp(`(${query})`, 'gi'));
-    return parts.map((part, i) => part.toLowerCase() === messageSearchQuery.toLowerCase() ? <mark key={i} className="bg-yellow-500/60 text-[#0a0a0a] font-bold rounded-sm px-0.5">{part}</mark> : part);
+    return parts.map((part, i) => part.toLowerCase() === messageSearchQuery.toLowerCase() ? <mark key={i} className="bg-yellow-400 text-gray-900 font-bold rounded-sm px-0.5">{part}</mark> : part);
   };
 
   return (
     <DashboardLayout>
-      <div className="absolute inset-0 z-10 flex bg-[#0a0a0a] overflow-hidden font-sans border-t border-[#272729] md:border-none">
+      <div className="absolute inset-0 z-10 flex bg-white dark:bg-[#030303] overflow-hidden font-sans transition-colors duration-300 border-t border-gray-200 dark:border-[#272729] md:border-none">
          <ChatSidebar 
-            rooms={rooms} requests={requests} activeTab={activeTab} setActiveTab={setActiveTab} 
+            rooms={rooms} requests={requests} groupInvites={groupInvites} callHistory={callHistory} activeTab={activeTab} setActiveTab={setActiveTab} 
             selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId} presence={presence} 
             user={user} formatTime={formatTime} newUsername={newUsername} setNewUsername={setNewUsername} 
             isCreating={isCreating} handleCreateDM={handleCreateDMOrJoin} isLoadingSidebar={isLoadingSidebar}
-            handleRequestAction={handleRequestAction} setShowGroupModal={setShowGroupModal}
+            handleRequestAction={handleRequestAction} handleGroupInviteAction={handleGroupInviteAction} setShowGroupModal={setShowGroupModal}
+            handleCallLogClick={handleCallLogClick}
          />
          
          {activeRoom?.type === 'group' || activeRoom?.type === 'GROUP' ? (
@@ -689,6 +757,8 @@ export default function Chats() {
          ) : (
            <ChatWindow 
               activeRoom={activeRoom} selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId}
+              isRequest={isRequest} 
+              handleRequestAction={handleRequestAction} 
               messages={messages} user={user} presence={presence} typingData={typingData}
               isMessagesLoading={isMessagesLoading} isLoadingOlder={isLoadingOlder} hasMoreMessages={hasMoreMessages}
               fetchMessages={fetchMessages} messagesEndRef={messagesEndRef} isSearchingMessages={isSearchingMessages}
@@ -710,70 +780,71 @@ export default function Chats() {
       </div>
 
       {toastMessage && (
-        <div className={`fixed bottom-6 right-6 z-[99999] px-6 py-3 rounded-xl shadow-2xl animate-in slide-in-from-bottom-5 font-bold text-white ${toastMessage.type === 'success' ? 'bg-green-600' : toastMessage.type === 'error' ? 'bg-red-600' : 'bg-blue-600'}`}>
-           {toastMessage.msg}
-        </div>
+        <div className={`fixed bottom-6 right-6 z-[99999] px-6 py-3.5 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-5 font-extrabold text-white text-sm ${
+           toastMessage.type === 'success' ? 'bg-green-600' : 
+           toastMessage.type === 'error' ? 'bg-red-600' : 
+           toastMessage.type === 'warning' ? 'bg-gray-800 border border-gray-700' : 'bg-blue-600'
+        }`}>{toastMessage.msg}</div>
       )}
 
-      {/* --- DM ACTIONS CONFIRMATION MODAL --- */}
       <Modal isOpen={confirmConfig !== null} onClose={() => setConfirmConfig(null)} title={confirmConfig?.title || "Confirm"}
         footer={
            <>
-            <button onClick={() => setConfirmConfig(null)} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</button>
-            <button onClick={confirmConfig?.onConfirm} className="px-5 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500">Confirm</button>
+            <button onClick={() => setConfirmConfig(null)} className="px-5 py-3 text-sm font-extrabold text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={confirmConfig?.onConfirm} className="px-6 py-3 bg-blue-600 text-white text-sm font-extrabold rounded-2xl shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] hover:bg-blue-500 transition-all hover:-translate-y-0.5">Confirm</button>
            </>
         }>
-         <p className="text-gray-300">{confirmConfig?.desc}</p>
+         <p className="text-gray-600 dark:text-gray-300 font-medium py-2 text-center md:text-left">{confirmConfig?.desc}</p>
       </Modal>
 
-      {/* --- NEW: CUSTOM REPORT MODAL --- */}
       <Modal isOpen={reportConfig !== null} onClose={() => { setReportConfig(null); setReportReason(""); }} title={`Report @${reportConfig?.username}`}
         footer={
            <>
-            <button onClick={() => { setReportConfig(null); setReportReason(""); }} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</button>
-            <button onClick={submitReport} disabled={!reportReason.trim() || isReporting} className="px-5 py-2 bg-red-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-red-500 flex items-center gap-2">
-               {isReporting && <Loader2 size={14} className="animate-spin" />} Submit Report
+            <button onClick={() => { setReportConfig(null); setReportReason(""); }} className="px-5 py-3 text-sm font-extrabold text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={submitReport} disabled={!reportReason.trim() || isReporting} className="px-6 py-3 bg-red-600 disabled:opacity-50 text-white text-sm font-extrabold rounded-2xl shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] hover:bg-red-500 transition-all hover:-translate-y-0.5 flex items-center gap-2">
+               {isReporting && <Loader2 size={16} className="animate-spin" />} Submit Report
             </button>
            </>
         }>
-         <div className="space-y-4">
-             <p className="text-sm text-gray-300">Why are you reporting this user? They will be blocked immediately upon submission.</p>
+         <div className="space-y-4 py-2">
+             <p className="text-sm font-medium text-gray-600 dark:text-gray-300 text-center md:text-left">Why are you reporting this user? They will be blocked immediately upon submission.</p>
              <textarea 
                 value={reportReason} 
                 onChange={(e) => setReportReason(e.target.value)} 
-                className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-none" 
+                className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl p-4 text-sm font-medium text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[120px] resize-none shadow-inner transition-all" 
                 placeholder="E.g., Inappropriate behavior, spam..." 
                 autoFocus 
              />
          </div>
       </Modal>
 
-      {/* CREATE GROUP MODAL */}
       <Modal isOpen={showGroupModal} onClose={() => setShowGroupModal(false)} title="Create a Squad">
-        <form onSubmit={handleCreateGroup} className="space-y-4">
+        <form onSubmit={handleCreateGroup} className="space-y-5 py-2">
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Group Name</label>
-                <input type="text" value={groupName} onChange={e => setGroupName(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="E.g. Weekend Gamers" autoFocus required />
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Group Name</label>
+                <input type="text" value={groupName} onChange={e => setGroupName(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner transition-all" placeholder="E.g. Weekend Gamers" autoFocus required />
             </div>
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Group Image URL (Optional)</label>
-                <input type="url" value={groupAvatarUrl} onChange={e => setGroupAvatarUrl(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="https://example.com/image.png" />
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Group Image URL (Optional)</label>
+                <input type="url" value={groupAvatarUrl} onChange={e => setGroupAvatarUrl(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner transition-all" placeholder="https://example.com/image.png" />
             </div>
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Description (Optional)</label>
-                <input type="text" value={groupDesc} onChange={e => setGroupDesc(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="What is this group for?" />
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Description (Optional)</label>
+                <input type="text" value={groupDesc} onChange={e => setGroupDesc(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner transition-all" placeholder="What is this group for?" />
             </div>
-            <label className="flex items-center gap-3 p-3 bg-[#0a0a0a] border border-[#272729] rounded-xl cursor-pointer hover:border-gray-600 transition-colors">
-                <input type="checkbox" checked={isPrivateGroup} onChange={e => setIsPrivateGroup(e.target.checked)} className="w-4 h-4 accent-blue-500 rounded bg-gray-800 border-gray-600" />
-                <div><p className="text-sm font-bold text-white">Private Group</p><p className="text-[10px] text-gray-500">Only people with an invite code can join.</p></div>
+            <label className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 transition-colors shadow-sm mt-2">
+                <input type="checkbox" checked={isPrivateGroup} onChange={e => setIsPrivateGroup(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+                <div>
+                   <p className="text-sm font-bold text-gray-900 dark:text-white">Private Group</p>
+                   <p className="text-[10px] font-medium text-gray-500 mt-0.5">Only people with an invite code can join.</p>
+                </div>
             </label>
-            <button type="submit" disabled={!groupName.trim() || isCreatingGroup} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 mt-2">
-                {isCreatingGroup ? <Loader2 size={16} className="animate-spin" /> : "Create Squad"}
+            <button type="submit" disabled={!groupName.trim() || isCreatingGroup} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-extrabold py-3.5 rounded-2xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] flex items-center justify-center gap-2 mt-6 hover:-translate-y-0.5">
+                {isCreatingGroup ? <Loader2 size={18} className="animate-spin" /> : "Create Squad"}
             </button>
         </form>
       </Modal>
 
-      {/* --- INCOMING CALL POPUP --- */}
       {incomingCall && (() => {
         let callerName = incomingCall.from;
         const directRoom = rooms.find(r => r.partner_id === incomingCall.from);
@@ -786,20 +857,23 @@ export default function Chats() {
         }
         
         return (
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in">
-           <div className="bg-[#1a1a1a] border border-[#272729] rounded-3xl p-8 flex flex-col items-center shadow-2xl min-w-[300px] animate-in zoom-in-95">
-              <div className="w-24 h-24 rounded-full bg-blue-900/30 flex items-center justify-center text-4xl font-bold text-blue-500 mb-4 animate-pulse border-4 border-blue-500/20">
-                 {callerName.charAt(0).toUpperCase()}
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-gray-900/60 dark:bg-black/80 backdrop-blur-md animate-in fade-in transition-colors">
+           <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#272729] rounded-[2rem] p-8 md:p-10 flex flex-col items-center shadow-2xl min-w-[320px] animate-in zoom-in-95 transition-colors">
+              <div className="relative mb-6">
+                 <div className="absolute inset-0 bg-blue-400/20 dark:bg-blue-600/30 blur-xl rounded-full animate-pulse"></div>
+                 <div className="w-24 h-24 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-4xl font-extrabold text-blue-600 dark:text-blue-500 shadow-inner border-4 border-blue-200 dark:border-blue-500/20 relative z-10">
+                    {callerName.charAt(0).toUpperCase()}
+                 </div>
               </div>
-              <h2 className="text-xl font-bold text-white mb-1">{callerName}</h2>
-              <p className="text-gray-400 text-sm mb-8">Incoming {incomingCall.hasVideo ? 'Video' : 'Audio'} Call...</p>
+              <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white mb-1 transition-colors">{callerName}</h2>
+              <p className="text-gray-500 dark:text-gray-400 text-sm font-medium mb-8 transition-colors">Incoming {incomingCall.hasVideo ? 'Video' : 'Audio'} Call...</p>
               
-              <div className="flex gap-6">
-                 <button onClick={rejectIncomingCall} className="w-14 h-14 bg-red-500 hover:bg-red-400 rounded-full flex items-center justify-center text-white shadow-lg transition-transform active:scale-95">
-                    <PhoneCall size={24} className="rotate-[135deg]" />
+              <div className="flex gap-6 w-full px-4">
+                 <button onClick={rejectIncomingCall} className="flex-1 h-14 bg-red-600 hover:bg-red-500 rounded-[1.5rem] flex items-center justify-center text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all active:scale-95 hover:-translate-y-0.5">
+                    <PhoneCall size={24} className="rotate-[135deg]" strokeWidth={2.5} />
                  </button>
-                 <button onClick={() => acceptIncomingCall(callerName)} className="w-14 h-14 bg-green-500 hover:bg-green-400 rounded-full flex items-center justify-center text-white shadow-lg transition-transform active:scale-95 animate-bounce">
-                    <PhoneCall size={24} />
+                 <button onClick={() => acceptIncomingCall(callerName)} className="flex-1 h-14 bg-green-500 hover:bg-green-400 rounded-[1.5rem] flex items-center justify-center text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all active:scale-95 animate-bounce hover:-translate-y-0.5">
+                    <PhoneCall size={24} strokeWidth={2.5} />
                  </button>
               </div>
            </div>

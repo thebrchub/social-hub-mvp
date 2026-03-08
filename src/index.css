@@ -1,10 +1,14 @@
 @import "tailwindcss";
 
+/* --- ENABLE MANUAL DARK MODE CLASS IN TAILWIND V4 --- */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
 }
-/* --- PREMIUM SCROLLBAR STYLES --- */
+
+/* --- PREMIUM SCROLLBAR STYLES (Light & Dark Support) --- */
 
 /* The width of the scrollbar */
 ::-webkit-scrollbar {
@@ -17,23 +21,32 @@
   background: transparent; 
 }
 
-/* The moving part (thumb) */
+/* ☀️ LIGHT MODE SCROLLBAR */
 ::-webkit-scrollbar-thumb {
-  background: #334155; /* Dark Grey (Slate-700) */
-  border-radius: 10px; /* Rounded corners */
-  border: 2px solid #0a0a0a; /* Padding effect */
+  background: #cbd5e1; /* Slate-300 */
+  border-radius: 10px;
+  border: 2px solid #f9fafb; /* Padding effect matching bg-gray-50 */
 }
-
-/* Hover effect */
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569; /* Slightly lighter on hover */
+  background: #94a3b8; /* Slate-400 */
 }
-
-/* For Firefox (different engine) */
 html {
   scrollbar-width: thin;
-  scrollbar-color: #334155 #0a0a0a;
+  scrollbar-color: #cbd5e1 #f9fafb;
 }
+
+/* 🌙 DARK MODE SCROLLBAR */
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155; /* Slate-700 */
+  border: 2px solid #030303; /* Padding effect matching dark background */
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569; /* Slate-600 */
+}
+html.dark {
+  scrollbar-color: #334155 #030303;
+}
+
 /* Utility to hide scrollbar but keep functionality */
 .scrollbar-hide::-webkit-scrollbar {
     display: none;

@@ -15,7 +15,6 @@ const PRESET_AMOUNTS = [100, 500, 1000, 5000];
 const Donations = () => {
   const { user } = useAuthStore();
   
-  // States
   const [amount, setAmount] = useState<number | ''>('');
   const [leaderboardScope, setLeaderboardScope] = useState<'alltime' | 'monthly'>('alltime');
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -26,7 +25,6 @@ const Donations = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
-  // Fetch Data
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -48,25 +46,19 @@ const Donations = () => {
     fetchData();
   }, [leaderboardScope]);
 
-  // Handle Donation (Razorpay trigger goes here)
   const handleDonate = async () => {
     if (!amount || amount < 1) return;
     setIsProcessing(true);
 
     try {
-      // 1. Hit your backend to create an order / process donation
       const res = await api.post('/donate', { amount: Number(amount), currency: 'INR' });
-      
-      // TS FIX: Logging the response clears the warning and helps you debug Razorpay order IDs later!
       console.log("Razorpay Order Created:", res);
       
-      // NOTE: Normally, you would trigger the Razorpay SDK popup here using the order ID from the response.
-      // For now, we simulate a successful payment flow.
+      // Simulate Razorpay successful flow for now
       setTimeout(() => {
         setIsProcessing(false);
         setShowSuccessModal(true);
         setAmount('');
-        // Re-fetch history and leaderboard after successful donation
       }, 1500);
 
     } catch (error: any) {
@@ -75,21 +67,31 @@ const Donations = () => {
     }
   };
 
+  // STANDARD DATE FORMAT: 07 March, 2026
+  const formatDate = (isoString: string) => {
+    if (!isoString) return 'Recently';
+    return new Date(isoString).toLocaleDateString('en-GB', { 
+      day: '2-digit', 
+      month: 'long', 
+      year: 'numeric' 
+    });
+  };
+
   return (
     <DashboardLayout>
-      <div className="h-full overflow-y-auto bg-[#0a0a0a] scrollbar-hide pb-24 md:pb-8">
-        <div className="max-w-6xl mx-auto px-4 sm:px-8 lg:px-12 pt-6 sm:pt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="h-full overflow-y-auto bg-gray-50 dark:bg-[#030303] scrollbar-hide pb-24 md:pb-12 transition-colors duration-300">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 lg:px-12 pt-8 sm:pt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
           
           {/* --- HERO HEADER --- */}
-          <div className="flex flex-col items-center text-center mb-10 sm:mb-12">
-             <div className="w-16 h-16 sm:w-20 sm:h-20 bg-blue-600/20 rounded-full flex items-center justify-center text-blue-500 mb-4 sm:mb-6 shadow-[0_0_40px_rgba(59,130,246,0.3)] relative">
-                <Heart size={32} className="sm:w-10 sm:h-10 fill-blue-500 animate-pulse" />
-                <div className="absolute top-0 right-0 text-yellow-400 animate-bounce"><Sparkles size={16} /></div>
+          <div className="flex flex-col items-center text-center mb-10 sm:mb-14">
+             <div className="w-20 h-20 sm:w-24 sm:h-24 bg-blue-50 dark:bg-[#1E3A8A] rounded-[2rem] flex items-center justify-center text-blue-600 dark:text-blue-400 mb-6 shadow-[inset_0_2px_4px_rgba(255,255,255,0.7)] dark:shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_10px_30px_rgba(37,99,235,0.2)] border border-blue-200 dark:border-[#1E40AF] relative transition-colors">
+                <Heart size={36} strokeWidth={2.5} className="fill-blue-600 dark:fill-blue-500 animate-pulse" />
+                <div className="absolute -top-2 -right-2 text-yellow-500 animate-bounce"><Sparkles size={20} strokeWidth={2.5} /></div>
              </div>
-             <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight font-display mb-3">
-               Support <span className="text-blue-500">zQuab</span>
+             <h1 className="text-3xl sm:text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight font-display mb-3 transition-colors">
+               Support <span className="text-blue-600 dark:text-blue-500">zQuab</span>
              </h1>
-             <p className="text-gray-400 text-sm sm:text-base max-w-xl leading-relaxed">
+             <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base max-w-xl leading-relaxed font-medium transition-colors">
                Your contributions help us maintain the platform, fund exciting new features in zQuab Labs, and unlock exclusive supporter badges for your profile!
              </p>
           </div>
@@ -100,23 +102,23 @@ const Donations = () => {
              <div className="lg:col-span-7 flex flex-col gap-6 sm:gap-8">
                 
                 {/* Donate Card */}
-                <div className="bg-[#1A1A1B] border border-[#343536] rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden group">
-                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 to-purple-600"></div>
+                <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-[2rem] p-6 sm:p-8 shadow-sm relative overflow-hidden group transition-colors">
+                   <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
                    
-                   <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-6">
-                      <CreditCard className="text-blue-500" /> Make a Contribution
+                   <h2 className="text-xl font-extrabold text-gray-900 dark:text-white flex items-center gap-2 mb-6 transition-colors">
+                      <CreditCard className="text-blue-600 dark:text-blue-500" strokeWidth={2.5} /> Make a Contribution
                    </h2>
 
-                   {/* Presets */}
+                   {/* Presets - 3D Bulge */}
                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                       {PRESET_AMOUNTS.map((preset) => (
                          <button 
                            key={preset}
                            onClick={() => setAmount(preset)}
-                           className={`py-3 rounded-xl font-bold text-sm transition-all border ${
+                           className={`py-3 rounded-2xl font-bold text-sm transition-all border-2 ${
                              amount === preset 
-                             ? 'bg-blue-600/20 border-blue-500 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.3)]' 
-                             : 'bg-[#0a0a0a] border-[#272729] text-gray-300 hover:border-gray-500'
+                             ? 'bg-blue-600 dark:bg-[#1E3A8A] border-blue-500 dark:border-[#1E40AF] text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_4px_10px_rgba(37,99,235,0.3)] dark:shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_4px_10px_rgba(0,0,0,0.4)] scale-105' 
+                             : 'bg-gray-50 dark:bg-[#0a0a0a] border-gray-200 dark:border-[#272729] text-gray-600 dark:text-gray-400 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-white dark:hover:bg-[#111] hover:text-gray-900 dark:hover:text-white shadow-sm'
                            }`}
                          >
                            ₹{preset}
@@ -126,53 +128,54 @@ const Donations = () => {
 
                    {/* Custom Amount */}
                    <div className="relative mb-8">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">₹</span>
+                      <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 font-extrabold text-lg">₹</span>
                       <input 
                          type="number" 
                          value={amount}
                          onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : '')}
                          placeholder="Enter custom amount"
-                         className="w-full bg-[#0a0a0a] border border-[#343536] rounded-xl pl-10 pr-4 py-4 text-white font-bold focus:outline-none focus:border-blue-500 transition-colors shadow-inner"
+                         className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] rounded-2xl pl-12 pr-4 py-4 text-gray-900 dark:text-white font-extrabold focus:outline-none focus:bg-white dark:focus:bg-[#111] focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner dark:shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]"
                       />
                    </div>
 
-                   {/* Action Button */}
+                   {/* Action Button - Massive 3D Bulge */}
                    <button 
                      onClick={handleDonate}
                      disabled={!amount || amount < 1 || isProcessing}
-                     className="w-full py-4 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(255,255,255,0.2)]"
+                     className="w-full py-4 bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-black dark:hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-gray-900 dark:disabled:hover:bg-white rounded-2xl font-extrabold transition-all flex items-center justify-center gap-2 shadow-[inset_0_2px_4px_rgba(255,255,255,0.3),_0_6px_15px_rgba(0,0,0,0.2)] dark:shadow-[inset_0_2px_4px_rgba(255,255,255,0.8),_0_6px_15px_rgba(255,255,255,0.1)] hover:-translate-y-0.5"
                    >
-                     {isProcessing ? <Loader2 size={20} className="animate-spin" /> : <Heart size={20} className="fill-black" />}
-                     {isProcessing ? 'Processing...' : `Donate ${amount ? '₹' + amount : ''}`}
+                     {isProcessing ? <Loader2 size={20} className="animate-spin" strokeWidth={2.5} /> : <Heart size={20} strokeWidth={2.5} className="fill-white dark:fill-black" />}
+                     {isProcessing ? 'Processing securely...' : `Donate ${amount ? '₹' + amount : ''}`}
                    </button>
-                   <p className="text-center text-[10px] text-gray-500 mt-4 uppercase tracking-widest flex items-center justify-center gap-1">
-                      <ShieldCheck size={12} /> Secured by Razorpay
+                   <p className="text-center text-[10px] text-gray-500 dark:text-gray-400 mt-5 font-bold uppercase tracking-widest flex items-center justify-center gap-1.5 transition-colors">
+                      <ShieldCheck size={14} strokeWidth={2.5} className="text-green-500" /> Secured by Razorpay
                    </p>
                 </div>
 
                 {/* Personal History */}
-                <div className="bg-[#1A1A1B] border border-[#272729] rounded-3xl p-6">
-                   <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
-                      <History size={16} className="text-gray-400" /> My History
+                <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-[2rem] p-6 sm:p-8 shadow-sm transition-colors">
+                   <h3 className="text-sm font-extrabold text-gray-900 dark:text-white flex items-center gap-2 mb-5 uppercase tracking-widest transition-colors">
+                      <History size={18} className="text-gray-400 dark:text-gray-500" strokeWidth={2.5} /> My History
                    </h3>
                    {history.length > 0 ? (
                       <div className="space-y-3">
                          {history.map((record) => (
-                            <div key={record.id} className="flex justify-between items-center p-3 bg-[#0a0a0a] rounded-xl border border-[#272729]">
+                            <div key={record.id} className="flex justify-between items-center p-4 bg-gray-50 dark:bg-[#0a0a0a] rounded-2xl border border-gray-100 dark:border-[#272729] transition-colors">
                                <div>
-                                  <p className="text-sm font-bold text-white">₹{record.amount}</p>
-                                  <p className="text-[10px] text-gray-500">{new Date(record.created_at).toLocaleDateString()}</p>
+                                  <p className="text-base font-extrabold text-gray-900 dark:text-white">₹{record.amount}</p>
+                                  <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 mt-0.5 uppercase tracking-widest">{formatDate(record.created_at)}</p>
                                </div>
-                               <span className="text-[10px] font-bold uppercase tracking-wider text-green-500 bg-green-500/10 px-2 py-1 rounded">
+                               <span className="text-[10px] font-extrabold uppercase tracking-widest text-green-600 dark:text-green-500 bg-green-100 dark:bg-green-500/10 px-3 py-1.5 rounded-lg border border-green-200 dark:border-green-900/30 shadow-sm">
                                   {record.status}
                                </span>
                             </div>
                          ))}
                       </div>
                    ) : (
-                      <p className="text-xs text-gray-500 text-center py-4 bg-[#0a0a0a] rounded-xl border border-dashed border-[#272729]">
-                         No donations yet. Be the first to grab a badge!
-                      </p>
+                      <div className="flex flex-col items-center justify-center py-6 bg-gray-50 dark:bg-[#0a0a0a] rounded-2xl border-2 border-dashed border-gray-200 dark:border-[#272729] transition-colors">
+                         <p className="text-xs font-bold text-gray-500 dark:text-gray-400">No donations yet.</p>
+                         <p className="text-[10px] font-medium text-gray-400 dark:text-gray-500 mt-1">Be the first to grab a badge!</p>
+                      </div>
                    )}
                 </div>
              </div>
@@ -181,24 +184,24 @@ const Donations = () => {
              <div className="lg:col-span-5 flex flex-col gap-6 sm:gap-8">
                 
                 {/* Leaderboard */}
-                <div className="bg-[#1A1A1B] border border-[#343536] rounded-3xl p-6 shadow-xl flex flex-col max-h-[500px]">
+                <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-[2rem] p-6 sm:p-8 shadow-sm flex flex-col max-h-[550px] transition-colors">
                    <div className="flex items-center justify-between mb-6 shrink-0">
-                      <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                         <Trophy className="text-yellow-500" /> Top Donors
+                      <h2 className="text-xl font-extrabold text-gray-900 dark:text-white flex items-center gap-2 transition-colors">
+                         <Trophy className="text-yellow-500" strokeWidth={2.5} /> Top Donors
                       </h2>
                    </div>
 
-                   {/* Toggle Tabs */}
-                   <div className="flex bg-[#0a0a0a] p-1 rounded-lg border border-[#272729] mb-6 shrink-0">
+                   {/* Toggle Tabs - 3D Bulge */}
+                   <div className="flex bg-gray-100 dark:bg-[#0a0a0a] p-1 rounded-xl border border-gray-200 dark:border-[#272729] mb-6 shrink-0 shadow-inner transition-colors">
                       <button 
                          onClick={() => setLeaderboardScope('alltime')}
-                         className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${leaderboardScope === 'alltime' ? 'bg-[#272729] text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                         className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all shadow-sm ${leaderboardScope === 'alltime' ? 'bg-white dark:bg-[#272729] text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-none'}`}
                       >
                          All Time
                       </button>
                       <button 
                          onClick={() => setLeaderboardScope('monthly')}
-                         className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${leaderboardScope === 'monthly' ? 'bg-[#272729] text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                         className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all shadow-sm ${leaderboardScope === 'monthly' ? 'bg-white dark:bg-[#272729] text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-none'}`}
                       >
                          Monthly
                       </button>
@@ -207,59 +210,58 @@ const Donations = () => {
                    {/* Leaderboard List */}
                    <div className="flex-1 overflow-y-auto scrollbar-hide space-y-3 pr-1">
                       {isLoadingBoard ? (
-                         <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 text-gray-500 animate-spin" /></div>
+                         <div className="flex justify-center py-10"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" strokeWidth={3} /></div>
                       ) : leaderboard.length > 0 ? (
                          leaderboard.map((donor, idx) => (
-                            <div key={donor.id} className="flex items-center gap-3 p-3 bg-[#0a0a0a] rounded-xl border border-[#272729] hover:border-[#343536] transition-colors relative overflow-hidden group shrink-0">
+                            <div key={donor.id} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-[#0a0a0a] rounded-2xl border border-gray-100 dark:border-[#272729] hover:border-gray-300 dark:hover:border-[#343536] transition-colors relative overflow-hidden group shrink-0">
                                {/* Rank Medals for top 3 */}
-                               {idx === 0 && <div className="absolute top-0 left-0 w-1 h-full bg-yellow-400"></div>}
-                               {idx === 1 && <div className="absolute top-0 left-0 w-1 h-full bg-gray-300"></div>}
-                               {idx === 2 && <div className="absolute top-0 left-0 w-1 h-full bg-amber-700"></div>}
+                               {idx === 0 && <div className="absolute top-0 left-0 w-1.5 h-full bg-yellow-400"></div>}
+                               {idx === 1 && <div className="absolute top-0 left-0 w-1.5 h-full bg-gray-300"></div>}
+                               {idx === 2 && <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-600"></div>}
 
-                               <div className="w-10 h-10 rounded-full bg-gray-800 overflow-hidden shrink-0 ml-1">
+                               <div className="w-12 h-12 rounded-xl bg-gray-200 dark:bg-gray-800 overflow-hidden shrink-0 ml-1.5 border border-gray-300 dark:border-[#343536]">
                                   <img src={donor.avatar_url || `https://ui-avatars.com/api/?name=${donor.name}&background=random`} alt={donor.name} className="w-full h-full object-cover" />
                                </div>
                                <div className="flex-1 min-w-0">
-                                  <h4 className="text-sm font-bold text-white truncate flex items-center gap-1">
+                                  <h4 className="text-sm font-extrabold text-gray-900 dark:text-white truncate flex items-center gap-1.5 transition-colors">
                                      {donor.name} 
-                                     {idx === 0 && <Medal size={14} className="text-yellow-400 shrink-0" />}
+                                     {idx === 0 && <Medal size={14} className="text-yellow-500 shrink-0" strokeWidth={2.5} />}
                                   </h4>
-                                  <p className="text-[10px] text-gray-500 truncate">@{donor.username}</p>
+                                  <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 truncate mt-0.5">@{donor.username}</p>
                                </div>
                                <div className="text-right shrink-0">
-                                  <p className="text-sm font-bold text-green-400">₹{donor.amount}</p>
-                                  <p className="text-[9px] font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded mt-1 inline-block">
+                                  <p className="text-sm font-extrabold text-green-600 dark:text-green-500">₹{donor.amount}</p>
+                                  <p className="text-[8px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/10 px-2 py-1 rounded-md mt-1 inline-block shadow-sm border border-blue-200 dark:border-blue-900/30">
                                      {donor.badge || 'Supporter'}
                                   </p>
                                </div>
                             </div>
                          ))
                       ) : (
-                         <div className="flex flex-col items-center justify-center py-10 text-center">
-                            <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-gray-600 mb-3">
-                               <Trophy size={20} />
+                         <div className="flex flex-col items-center justify-center py-12 text-center">
+                            <div className="w-16 h-16 rounded-[1.5rem] bg-gray-100 dark:bg-white/5 flex items-center justify-center text-gray-400 dark:text-gray-500 mb-4 shadow-inner">
+                               <Trophy size={24} strokeWidth={2.5} />
                             </div>
-                            <p className="text-sm text-gray-400 font-medium">No donors yet.</p>
-                            <p className="text-xs text-gray-600">Be the first to claim the top spot!</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 font-bold">No donors yet.</p>
+                            <p className="text-[10px] text-gray-500 font-medium mt-1 uppercase tracking-widest">Be the first to claim the top spot!</p>
                          </div>
                       )}
                    </div>
                 </div>
 
-                {/* --- TS FIX: DISPLAY UNLOCKABLE BADGES --- */}
+                {/* --- DISPLAY UNLOCKABLE BADGES --- */}
                 {badges.length > 0 && (
-                   <div className="bg-[#1A1A1B] border border-[#272729] rounded-3xl p-6">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
-                         <Medal size={16} className="text-yellow-500" /> Unlockable Badges
+                   <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-[2rem] p-6 sm:p-8 shadow-sm transition-colors">
+                      <h3 className="text-sm font-extrabold text-gray-900 dark:text-white flex items-center gap-2 mb-5 uppercase tracking-widest transition-colors">
+                         <Medal size={18} className="text-yellow-500" strokeWidth={2.5} /> Unlockable Badges
                       </h3>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2.5">
                          {badges.map((badge) => (
-                            <div key={badge.id} className="flex items-center gap-2 bg-[#0a0a0a] border border-[#343536] px-3 py-2 rounded-xl">
-                               {/* Inject dynamic color if backend provides it, otherwise use blue */}
-                               <ShieldCheck size={16} style={{ color: badge.color || '#3b82f6' }} />
+                            <div key={badge.id} className="flex items-center gap-2.5 bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] px-3.5 py-2.5 rounded-xl shadow-sm transition-colors">
+                               <ShieldCheck size={18} strokeWidth={2.5} style={{ color: badge.color || '#3b82f6' }} />
                                <div>
-                                  <p className="text-xs font-bold text-white leading-tight">{badge.name}</p>
-                                  <p className="text-[10px] text-gray-500">₹{badge.threshold}+</p>
+                                  <p className="text-xs font-extrabold text-gray-900 dark:text-white leading-tight transition-colors">{badge.name}</p>
+                                  <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 mt-0.5">₹{badge.threshold}+</p>
                                </div>
                             </div>
                          ))}
@@ -278,17 +280,17 @@ const Donations = () => {
         onClose={() => setShowSuccessModal(false)} 
         title="Payment Successful"
         footer={
-          <button onClick={() => setShowSuccessModal(false)} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-500 transition-colors">
+          <button onClick={() => setShowSuccessModal(false)} className="w-full py-3.5 bg-blue-600 dark:bg-[#1E3A8A] border border-blue-700 dark:border-[#1E40AF] text-white font-extrabold rounded-2xl hover:bg-blue-700 dark:hover:bg-blue-600 transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_4px_10px_rgba(37,99,235,0.3)] dark:shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_4px_10px_rgba(0,0,0,0.4)] hover:-translate-y-0.5">
             Awesome!
           </button>
         }
       >
-        <div className="flex flex-col items-center text-center py-4">
-          <div className="w-16 h-16 bg-blue-500/20 text-blue-500 rounded-full flex items-center justify-center mb-4">
-            <Heart size={32} className="fill-blue-500" />
+        <div className="flex flex-col items-center text-center py-6">
+          <div className="w-20 h-20 bg-blue-50 dark:bg-blue-500/20 rounded-full flex items-center justify-center mb-5 shadow-inner border border-blue-100 dark:border-blue-500/20">
+            <Heart size={40} className="fill-blue-600 dark:fill-blue-500 text-blue-600 dark:text-blue-500" strokeWidth={2.5} />
           </div>
-          <h4 className="text-xl font-bold text-white mb-2">Thank you, {user?.name?.split(' ')[0] || 'friend'}!</h4>
-          <p className="text-sm text-gray-400">Your contribution helps keep zQuab alive. Your profile badge will be updated shortly.</p>
+          <h4 className="text-xl font-display font-extrabold text-gray-900 dark:text-white mb-2">Thank you, {user?.name?.split(' ')[0] || 'friend'}!</h4>
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Your contribution helps keep zQuab alive. Your profile badge will be updated shortly.</p>
         </div>
       </Modal>
 

@@ -17,6 +17,7 @@ import VidMatches from './pages/VidMatches';
 import Labs from './pages/Labs';
 import Donations from './pages/Donations';
 
+
 // Helper Component to Protect Routes
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, needsOnboarding } = useAuthStore();
@@ -157,6 +158,8 @@ function App() {
             </ProtectedRoute>
           } 
         />
+
+         
 
         {/* Default Redirect to NotFound if page not found */}
         <Route path="*" element={<NotFound />} />

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, ArrowLeft, Loader2, Reply, Users, Info, Copy, LogOut, Trash2, Shield, UserMinus, Link, Plus, Send, Smile, Clock, Check, CheckCheck, X, Edit2 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
+import { useThemeStore } from '../../store/useThemeStore';
 import { api } from '../../services/api';
 import Modal from '../Modal';
 
@@ -11,6 +12,8 @@ export const ChatGroupWindow = ({
   handleSendMessage, inputValue, handleInput, replyingTo, setReplyingTo, showEmojiPicker, setShowEmojiPicker, onEmojiClick,
   formatTime, showInfoPanel, setShowInfoPanel, activeRoomDetails, isLoadingDetails, showToast, refreshChats, onPanelAction 
 }: any) => {
+
+  const { theme } = useThemeStore();
 
   const typingNames = typingData?.userIds.map((id: string) => {
      const member = activeRoom?.members?.find((m: any) => m.id === id);
@@ -25,9 +28,7 @@ export const ChatGroupWindow = ({
   const myMemberData = activeMembers.find((m: any) => m.id === user?.id);
   const amIAdmin = amICreator || myMemberData?.role?.toLowerCase() === 'admin';
 
-  // --- LOGICAL FIX: Prevent last admin from leaving ---
   const adminCount = activeMembers.filter((m: any) => m.role?.toLowerCase() === 'admin' || creatorId === m.id).length;
-  // A user can leave IF they are NOT an admin, OR if they are an admin but there is at least one other admin.
   const canLeaveGroup = !amIAdmin || adminCount > 1;
 
   // Add Members Modal States
@@ -44,13 +45,11 @@ export const ChatGroupWindow = ({
   const [editVisibility, setEditVisibility] = useState("public");
   const [isEditing, setIsEditing] = useState(false);
 
-  // Auto-close panels if room changes
   useEffect(() => {
      setShowAddModal(false);
      setShowEditModal(false);
   }, [selectedRoomId]);
 
-  // --- ADD MEMBERS LOGIC ---
   const openAddMembersModal = async () => {
       setShowAddModal(true);
       setIsLoadingFriends(true);
@@ -72,12 +71,27 @@ export const ChatGroupWindow = ({
       setSelectedFriends(prev => prev.includes(id) ? prev.filter(fId => fId !== id) : [...prev, id]);
   };
 
+  // --- PHASE 3 FIX: Smart Add Members Response Handling ---
   const submitAddMembers = async () => {
       if (selectedFriends.length === 0) return;
       setIsAdding(true);
       try {
-          await api.post(`/groups/${selectedRoomId}/members`, { memberIds: selectedFriends });
-          showToast(`${selectedFriends.length} members added!`, "success");
+          const res = await api.post(`/groups/${selectedRoomId}/members`, { memberIds: selectedFriends });
+          const data = res.data || res;
+          
+          const addedCount = data.added?.length || 0;
+          const invitedCount = data.invited?.length || 0;
+
+          let toastMsg = "";
+          if (addedCount > 0 && invitedCount > 0) {
+              toastMsg = `Added ${addedCount} friends. Sent invites to ${invitedCount} private users!`;
+          } else if (invitedCount > 0) {
+              toastMsg = `Sent squad invites to ${invitedCount} private users.`;
+          } else {
+              toastMsg = `Successfully added ${addedCount} members!`;
+          }
+
+          showToast(toastMsg, "success");
           setShowAddModal(false);
           refreshChats(); 
       } catch (e: any) {
@@ -87,7 +101,6 @@ export const ChatGroupWindow = ({
       }
   };
 
-  // --- EDIT GROUP LOGIC ---
   const openEditModal = () => {
       setEditName(activeRoomDetails?.name || activeRoom?.name || "");
       setEditAvatarUrl(activeRoomDetails?.avatarUrl || activeRoom?.avatar_url || "");
@@ -107,7 +120,7 @@ export const ChatGroupWindow = ({
           });
           showToast("Squad updated successfully!", "success");
           setShowEditModal(false);
-          refreshChats(); // Re-fetch group details so the UI updates instantly
+          refreshChats();
       } catch (err: any) {
           showToast(err.message || "Failed to update squad", "error");
       } finally {
@@ -116,74 +129,71 @@ export const ChatGroupWindow = ({
   };
 
   return (
-    <div className={`flex-1 flex bg-[#0a0a0a] relative min-w-0 ${!selectedRoomId ? 'hidden md:flex' : 'flex'}`}>
+    <div className={`flex-1 flex bg-white dark:bg-[#030303] relative min-w-0 transition-colors duration-300 ${!selectedRoomId ? 'hidden md:flex' : 'flex'}`}>
       
-      {/* INVISIBLE OVERLAY TO CLOSE PANEL WHEN CLICKING OUTSIDE */}
+      {/* INVISIBLE OVERLAY */}
       {showInfoPanel && (
-         <div 
-           className="absolute inset-0 z-40 bg-transparent"
-           onClick={() => setShowInfoPanel(false)}
-         />
+         <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setShowInfoPanel(false)} />
       )}
 
       {/* --- MAIN CHAT COLUMN --- */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
         
-        {/* Header (NO CALL BUTTONS) */}
-        <div className="h-16 border-b border-[#272729] flex items-center justify-between px-4 md:px-6 bg-[#0f0f0f]/90 backdrop-blur-md shrink-0">
-           <div className="flex items-center gap-3 min-w-0 cursor-pointer z-50" onClick={() => setShowInfoPanel(true)}>
-              <button onClick={(e) => { e.stopPropagation(); setSelectedRoomId(null); }} className="md:hidden p-2 -ml-2 text-gray-400 hover:text-white shrink-0">
-                <ArrowLeft size={20} />
+        {/* Header */}
+        <div className="h-16 border-b border-gray-200 dark:border-[#272729] flex items-center justify-between px-4 md:px-6 bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl shrink-0 transition-colors z-30 shadow-sm">
+           <div className="flex items-center gap-3 min-w-0 cursor-pointer group" onClick={() => setShowInfoPanel(true)}>
+              <button onClick={(e) => { e.stopPropagation(); setSelectedRoomId(null); }} className="md:hidden p-2 -ml-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white shrink-0 transition-colors">
+                <ArrowLeft size={20} strokeWidth={2.5} />
               </button>
               
-              <div className="w-10 h-10 rounded-full flex items-center justify-center text-blue-500 font-bold shrink-0 border border-[#272729] bg-blue-900/30 overflow-hidden">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-500 font-extrabold shrink-0 border border-blue-200 dark:border-[#272729] bg-blue-50 dark:bg-blue-900/30 overflow-hidden shadow-sm group-hover:border-blue-400 transition-colors">
                  {activeRoomDetails?.avatarUrl || activeRoom?.avatar_url ? (
                      <img src={activeRoomDetails?.avatarUrl || activeRoom?.avatar_url} alt="Group DP" className="w-full h-full object-cover" />
                  ) : (
-                     <Users size={18} />
+                     <Users size={20} strokeWidth={2.5} />
                  )}
               </div>
 
               <div className="min-w-0 flex flex-col justify-center">
-                 <h3 className="font-bold text-white text-[15px] flex items-center gap-2 truncate leading-tight">
+                 <h3 className="font-extrabold text-gray-900 dark:text-white text-[15px] flex items-center gap-2 truncate leading-tight transition-colors">
                     {activeRoom.name || `Squad_${selectedRoomId.substring(0,4)}`} 
                  </h3>
                  {typingData?.roomId === selectedRoomId && typingNames ? (
-                    <p className="text-[11px] text-[#4ade80] italic truncate font-medium animate-pulse">{typingNames} typing...</p>
+                    <p className="text-[11px] text-green-500 dark:text-[#4ade80] italic truncate font-bold animate-pulse">{typingNames} typing...</p>
                  ) : (
-                    <p className="text-[11px] text-gray-400 truncate hover:underline">{activeMembers.length} members</p>
+                    <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400 truncate hover:text-blue-500 transition-colors">{activeMembers.length} members</p>
                  )}
               </div>
            </div>
            
-           <div className="flex items-center gap-1 sm:gap-2 text-gray-400 shrink-0 z-50">
-              <button onClick={() => { setIsSearchingMessages(!isSearchingMessages); setMessageSearchQuery(""); }} className={`p-2 rounded-full transition-colors ${isSearchingMessages ? 'bg-blue-600/20 text-blue-400' : 'hover:bg-white/5 hover:text-white'}`} title="Search Chat"><Search size={18} /></button>
-              <button onClick={() => setShowInfoPanel(!showInfoPanel)} className={`p-2 rounded-full transition-colors hidden sm:block ${showInfoPanel ? 'bg-blue-600/20 text-blue-400' : 'hover:bg-white/5 hover:text-white'}`} title="Group Info"><Info size={18} /></button>
+           <div className="flex items-center gap-1 sm:gap-2 text-gray-400 dark:text-gray-500 shrink-0 z-50">
+              <button onClick={() => { setIsSearchingMessages(!isSearchingMessages); setMessageSearchQuery(""); }} className={`p-2 rounded-full transition-colors ${isSearchingMessages ? 'bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'}`} title="Search Chat"><Search size={18} strokeWidth={2.5} /></button>
+              <button onClick={() => setShowInfoPanel(!showInfoPanel)} className={`p-2 rounded-full transition-colors hidden sm:block ${showInfoPanel ? 'bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'}`} title="Group Info"><Info size={18} strokeWidth={2.5} /></button>
            </div>
         </div>
 
         {isSearchingMessages && (
-          <div className="px-4 py-3 bg-[#1a1a1a] border-b border-[#272729] flex items-center gap-3 shrink-0 shadow-lg z-20">
-             <Search size={16} className="text-gray-500" />
-             <input type="text" placeholder="Search in squad..." value={messageSearchQuery} onChange={(e) => setMessageSearchQuery(e.target.value)} className="flex-1 bg-transparent border-none text-[15px] text-white focus:outline-none" autoFocus />
-             <button onClick={() => { setIsSearchingMessages(false); setMessageSearchQuery(""); scrollToBottom(); }} className="text-sm font-bold text-blue-400">Cancel</button>
+          <div className="px-4 py-3 bg-gray-50 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-[#272729] flex items-center gap-3 shrink-0 shadow-inner z-20 transition-colors">
+             <Search size={16} strokeWidth={3} className="text-gray-400" />
+             <input type="text" placeholder="Search in squad..." value={messageSearchQuery} onChange={(e) => setMessageSearchQuery(e.target.value)} className="flex-1 bg-transparent border-none text-sm font-bold text-gray-900 dark:text-white focus:outline-none placeholder:text-gray-400" autoFocus />
+             <button onClick={() => { setIsSearchingMessages(false); setMessageSearchQuery(""); scrollToBottom(); }} className="text-xs font-extrabold text-blue-600 dark:text-blue-400 hover:text-blue-700 transition-colors uppercase tracking-widest bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-100 dark:border-transparent">Cancel</button>
           </div>
         )}
 
         {/* Messages Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 flex flex-col scrollbar-hide z-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col scrollbar-hide z-0 bg-white dark:bg-[#030303] transition-colors">
            {hasMoreMessages && !isSearchingMessages && (
-             <button onClick={() => fetchMessages(selectedRoomId, true)} disabled={isLoadingOlder} className="mx-auto mb-6 px-4 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 text-xs font-medium rounded-full flex items-center gap-2">
-               {isLoadingOlder ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />} Load older
+             <button onClick={() => fetchMessages(selectedRoomId, true)} disabled={isLoadingOlder} className="mx-auto mb-6 px-4 py-1.5 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 text-[10px] font-extrabold uppercase tracking-widest rounded-full flex items-center gap-2 transition-colors border border-gray-200 dark:border-transparent shadow-sm">
+               {isLoadingOlder ? <Loader2 size={14} className="animate-spin" strokeWidth={3} /> : <Clock size={14} strokeWidth={3} />} Load older
              </button>
            )}
 
            {isMessagesLoading ? (
-              <div className="m-auto flex items-center justify-center"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>
+              <div className="m-auto flex items-center justify-center"><Loader2 className="w-8 h-8 text-blue-600 dark:text-blue-500 animate-spin" strokeWidth={3} /></div>
            ) : (
               <>
                  <div className="mt-auto"></div>
-                 <div className="flex flex-col gap-2.5">
+                 <div className="flex flex-col gap-2">
                    {messages.map((msg: any, idx: number) => {
                       const isMe = msg.sender_id === user?.id || msg.from === user?.id;
                       const isSystemMsg = msg.type === 'system' || msg.sender_id === 'system' || msg.from === 'system';
@@ -193,7 +203,7 @@ export const ChatGroupWindow = ({
                       if (isSystemMsg) {
                         return (
                           <div id={`msg-${msgId}`} key={msgId} className="flex justify-center my-3">
-                             <span className="bg-white/5 border border-white/10 text-gray-400 text-[11px] px-4 py-1.5 rounded-full font-medium shadow-sm backdrop-blur-sm text-center">
+                             <span className="bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-widest shadow-sm text-center">
                                 {msgText}
                              </span>
                           </div>
@@ -212,23 +222,27 @@ export const ChatGroupWindow = ({
                       const actualText = isReply ? splitMsg.slice(1).join('\n\n') : msgText;
 
                       return (
-                        <div id={`msg-${msgId}`} key={msgId} onDoubleClick={() => setReplyingTo(msg)} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group cursor-pointer scroll-mt-20`}>
-                           <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed shadow-sm flex flex-col ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-[#1a1a1a] text-gray-200 border border-[#272729] rounded-bl-none'}`}>
-                              {!isMe && <span className="text-[10px] font-bold text-blue-400 mb-1">{senderName}</span>}
+                        <div id={`msg-${msgId}`} key={msgId} onDoubleClick={() => setReplyingTo(msg)} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group cursor-pointer scroll-mt-24`}>
+                           <div className={`max-w-[85%] md:max-w-[70%] px-3.5 py-2 md:px-4 md:py-2.5 rounded-2xl text-[14px] md:text-[15px] font-medium leading-snug shadow-sm flex flex-col transition-colors ${
+                             isMe 
+                             ? 'bg-blue-600 text-white rounded-br-none shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)]' 
+                             : 'bg-gray-100 dark:bg-[#1a1a1a] text-gray-900 dark:text-gray-200 border border-gray-200 dark:border-[#272729] rounded-bl-none'
+                           }`}>
+                              {!isMe && <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400 mb-1">{senderName}</span>}
                               {isReply && (
-                                <div className={`border-l-2 pl-2 mb-2 text-xs opacity-80 ${isMe ? 'border-white/40 bg-black/20' : 'border-blue-500 bg-black/20'} p-2 rounded-lg`}>
+                                <div className={`border-l-2 pl-2 mb-2 text-xs opacity-90 ${isMe ? 'border-white/50 bg-black/10 text-white' : 'border-blue-500 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 shadow-inner'} p-2 rounded-lg`}>
                                   {renderTextWithHighlights(quoteText)}
                                 </div>
                               )}
                               <span className="break-words whitespace-pre-wrap">{renderTextWithHighlights(actualText)}</span>
-                              <div className={`flex items-center gap-1 text-[10px] mt-1.5 ${isMe ? 'text-white/70 justify-end' : 'text-gray-500 justify-start'}`}>
+                              <div className={`flex items-center gap-1 text-[9px] md:text-[10px] mt-1 font-bold uppercase tracking-wider ${isMe ? 'text-blue-100 justify-end' : 'text-gray-400 dark:text-gray-500 justify-start'}`}>
                                  <span>{formatTime(msg.created_at)}</span>
                                  {isMe && (
                                    <span className="ml-1 flex items-center">
-                                     {msg.status === 'sending' && <Loader2 className="w-3 h-3 animate-spin text-white/70" />}
-                                     {(msg.status === 'sent' || !msg.status) && <Check className="w-3.5 h-3.5 text-white/70" />}
-                                     {msg.status === 'delivered' && <CheckCheck className="w-3.5 h-3.5 text-white/70" />}
-                                     {msg.status === 'read' && <CheckCheck className="w-3.5 h-3.5 text-[#4ade80] drop-shadow-[0_0_2px_rgba(74,222,128,0.4)]" />}
+                                     {msg.status === 'sending' && <Loader2 className="w-3 h-3 animate-spin text-white/70" strokeWidth={3} />}
+                                     {(msg.status === 'sent' || !msg.status) && <Check className="w-3.5 h-3.5 text-white/80" strokeWidth={3} />}
+                                     {msg.status === 'delivered' && <CheckCheck className="w-3.5 h-3.5 text-white/90" strokeWidth={3} />}
+                                     {msg.status === 'read' && <CheckCheck className="w-3.5 h-3.5 text-green-400 drop-shadow-sm" strokeWidth={3} />}
                                    </span>
                                  )}
                               </div>
@@ -243,125 +257,129 @@ export const ChatGroupWindow = ({
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-[#272729] bg-[#0a0a0a] shrink-0 flex flex-col z-20 relative">
+        <div className="border-t border-gray-200 dark:border-[#272729] bg-white dark:bg-[#0a0a0a] shrink-0 flex flex-col z-20 relative p-3 md:p-4 transition-colors">
            {showEmojiPicker && (
-             <div className="absolute bottom-full right-4 mb-2 z-[100] shadow-2xl rounded-xl overflow-hidden border border-[#272729]">
-               <EmojiPicker theme={Theme.DARK} onEmojiClick={onEmojiClick} width={320} height={350} />
+             <div className="absolute bottom-full right-4 mb-2 z-[100] shadow-2xl rounded-2xl overflow-hidden border border-gray-200 dark:border-[#343536] animate-in slide-in-from-bottom-2">
+               <EmojiPicker theme={theme === 'dark' ? Theme.DARK : Theme.LIGHT} onEmojiClick={onEmojiClick} width={320} height={350} lazyLoadEmojis={true} />
              </div>
            )}
            {replyingTo && (
-             <div className="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-[#272729]">
-                 <div className="flex items-center gap-3 overflow-hidden border-l-2 border-blue-500 pl-3">
-                    <Reply size={16} className="text-gray-400 shrink-0" />
+             <div className="flex items-center justify-between px-4 py-2 mb-3 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#272729] rounded-xl shadow-sm">
+                 <div className="flex items-center gap-2 overflow-hidden border-l-2 border-blue-500 pl-2">
+                    <Reply size={16} strokeWidth={2.5} className="text-gray-400 shrink-0" />
                     <div className="truncate">
-                       <p className="text-xs text-blue-400 font-bold mb-0.5">{replyingTo.sender_id === user?.id ? 'Replying to yourself' : 'Replying to member'}</p>
-                       <p className="text-gray-400 text-xs truncate max-w-[200px] md:max-w-md">{replyingTo.text || replyingTo.content}</p>
+                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-extrabold uppercase tracking-widest mb-0.5">{replyingTo.sender_id === user?.id ? 'Replying to yourself' : 'Replying to member'}</p>
+                       <p className="text-gray-600 dark:text-gray-400 text-xs font-medium truncate max-w-[200px] md:max-w-md">{replyingTo.text || replyingTo.content}</p>
                     </div>
                  </div>
-                 <button onClick={() => setReplyingTo(null)} className="p-1.5 text-gray-500 hover:text-white rounded-full bg-white/5 transition-colors"><X size={14}/></button>
+                 <button onClick={() => setReplyingTo(null)} className="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white rounded-full bg-white dark:bg-white/5 shadow-sm border border-gray-200 dark:border-transparent transition-colors"><X size={14} strokeWidth={2.5} /></button>
              </div>
            )}
-           <form onSubmit={handleSendMessage} className="p-4">
-              <div className="bg-[#1a1a1a] rounded-2xl flex items-center px-4 py-2 border border-[#272729] focus-within:border-blue-500/50 transition-colors shadow-inner">
-                <input type="text" value={inputValue} onChange={handleInput} placeholder="Message squad..." className="flex-1 bg-transparent text-white text-[15px] py-2 focus:outline-none placeholder:text-gray-600" autoFocus />
-                <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 transition-colors mr-2 ${showEmojiPicker ? 'text-yellow-400' : 'text-gray-400 hover:text-white'}`}><Smile size={22} /></button>
-                <button type="submit" disabled={!inputValue.trim()} className="p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-lg"><Send size={18} className="ml-0.5" /></button>
-              </div>
+           <form onSubmit={handleSendMessage} className="flex items-center gap-2 bg-gray-50 dark:bg-[#1a1a1a] p-1.5 md:p-2 rounded-full border border-gray-200 dark:border-[#272729] focus-within:border-blue-300 dark:focus-within:border-blue-500/50 transition-all shadow-inner focus-within:shadow-md">
+              <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 transition-colors shrink-0 rounded-full ${showEmojiPicker ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-500/10' : 'text-gray-400 hover:text-yellow-500'}`}><Smile size={22} strokeWidth={2.5} /></button>
+              <input type="text" value={inputValue} onChange={handleInput} placeholder="Message squad..." className="flex-1 bg-transparent text-gray-900 dark:text-white text-sm md:text-[15px] font-medium py-1.5 md:py-2 focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500" autoFocus />
+              <button type="submit" disabled={!inputValue.trim()} className="p-2 md:px-5 md:py-2 bg-blue-600 border border-blue-600 dark:border-blue-500 text-white rounded-full font-extrabold flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50 transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] disabled:shadow-none hover:-translate-y-0.5 disabled:hover:translate-y-0 shrink-0">
+                <Send size={18} strokeWidth={2.5} className="ml-0.5" />
+                <span className="hidden md:inline">Send</span>
+              </button>
            </form>
         </div>
       </div>
 
       {/* --- RIGHT SIDEBAR: GROUP INFO PANEL --- */}
       <div 
-        className={`absolute top-0 right-0 bottom-0 w-full sm:w-[350px] border-l border-[#272729] bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col z-50 shadow-[-20px_0_50px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-out ${showInfoPanel && selectedRoomId ? 'translate-x-0' : 'translate-x-full'}`}
+        className={`absolute top-0 right-0 bottom-0 w-full sm:w-[320px] border-l border-gray-200 dark:border-[#272729] bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col z-50 shadow-[-20px_0_50px_rgba(0,0,0,0.1)] dark:shadow-[-20px_0_50px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-out ${showInfoPanel && selectedRoomId ? 'translate-x-0' : 'translate-x-full'}`}
       >
-         <div className="h-16 border-b border-[#272729] flex items-center justify-between px-4 bg-[#1a1a1a] shrink-0">
+         <div className="h-16 border-b border-gray-200 dark:border-[#272729] flex items-center justify-between px-4 bg-gray-50/90 dark:bg-[#1a1a1a]/90 backdrop-blur-md shrink-0 transition-colors">
             <div className="flex items-center">
-                <button onClick={() => setShowInfoPanel(false)} className="p-2 -ml-2 mr-2 text-gray-400 hover:text-white shrink-0 transition-transform active:scale-95">
-                   <X size={20} />
+                <button onClick={() => setShowInfoPanel(false)} className="p-2 -ml-1 mr-3 bg-white dark:bg-[#272729] border border-gray-200 dark:border-transparent rounded-lg text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white shrink-0 transition-all shadow-sm active:scale-95">
+                   <X size={18} strokeWidth={2.5} />
                 </button>
-                <h2 className="font-bold text-white">Squad Info</h2>
+                <h2 className="font-extrabold text-gray-900 dark:text-white text-base">Squad Info</h2>
             </div>
          </div>
 
          <div className="flex-1 overflow-y-auto scrollbar-hide">
             {isLoadingDetails ? (
-               <div className="flex justify-center p-10"><Loader2 className="w-6 h-6 text-blue-500 animate-spin" /></div>
+               <div className="flex justify-center p-10"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" strokeWidth={3} /></div>
             ) : (
                <>
-                 <div className="p-6 flex flex-col items-center text-center border-b border-[#272729]">
-                    <div className="w-24 h-24 rounded-full flex items-center justify-center text-4xl font-bold mb-4 shadow-xl border-4 border-[#1a1a1a] bg-blue-900/30 text-blue-500 overflow-hidden">
+                 <div className="p-6 flex flex-col items-center text-center border-b border-gray-200 dark:border-[#272729] bg-white dark:bg-transparent transition-colors">
+                    <div className="w-24 h-24 rounded-full flex items-center justify-center text-4xl font-extrabold mb-4 shadow-lg border-4 border-blue-100 dark:border-[#1a1a1a] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-500 overflow-hidden transition-colors">
                        {activeRoomDetails?.avatarUrl || activeRoom?.avatar_url ? (
                            <img src={activeRoomDetails?.avatarUrl || activeRoom?.avatar_url} alt="Group DP" className="w-full h-full object-cover" />
                        ) : (
-                           <Users size={40} />
+                           <Users size={36} strokeWidth={2.5} />
                        )}
                     </div>
-                    <h3 className="text-xl font-bold text-white mb-1">{activeRoomDetails?.name || activeRoom?.name}</h3>
-                    <p className="text-sm text-gray-400 mb-2">{activeMembers.length} Participants</p>
+                    <h3 className="text-xl font-extrabold text-gray-900 dark:text-white mb-1 transition-colors">{activeRoomDetails?.name || activeRoom?.name}</h3>
+                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2 transition-colors">{activeMembers.length} Participants</p>
                     
-                    {/* Add Description if available */}
                     {activeRoomDetails?.description && (
-                        <p className="text-xs text-gray-500 mb-3 px-4 italic">"{activeRoomDetails.description}"</p>
+                        <p className="text-xs text-gray-600 dark:text-gray-500 mb-4 font-medium italic bg-gray-50 dark:bg-white/5 p-3 rounded-xl border border-gray-200 dark:border-transparent shadow-inner">"{activeRoomDetails.description}"</p>
                     )}
 
-                    {activeRoomDetails?.visibility === 'private' && <span className="px-2 py-0.5 bg-gray-800 text-gray-400 text-[10px] font-bold rounded uppercase tracking-wider">Private Squad</span>}
+                    {activeRoomDetails?.visibility === 'private' && <span className="px-3 py-1 bg-gray-900 dark:bg-gray-800 text-white dark:text-gray-300 text-[10px] font-extrabold rounded-lg uppercase tracking-widest shadow-sm">Private Squad</span>}
                  </div>
 
                  <div className="flex flex-col pb-6">
-                    {/* Admin Actions: Edit, Share, Add Members */}
+                    {/* Admin Actions */}
                     {amIAdmin && (
-                      <div className="p-4 border-b border-[#272729] space-y-3">
+                      <div className="p-4 border-b border-gray-200 dark:border-[#272729] space-y-3 transition-colors">
                         <div className="flex gap-2">
-                            <button onClick={openEditModal} className="flex-1 bg-[#1a1a1a] border border-[#272729] hover:bg-[#272729] text-gray-300 font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm shadow-sm">
-                               <Edit2 size={16} /> Edit Squad
+                            <button onClick={openEditModal} className="flex-1 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#272729] hover:bg-gray-100 dark:hover:bg-[#272729] text-gray-700 dark:text-gray-300 font-extrabold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 text-xs shadow-sm hover:shadow-md">
+                               <Edit2 size={16} strokeWidth={2.5} /> Edit
                             </button>
-                            <button onClick={openAddMembersModal} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-900/20">
+                            <button onClick={openAddMembersModal} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3 rounded-xl transition-all flex items-center justify-center gap-2 text-xs shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_2px_8px_rgba(37,99,235,0.4)] hover:-translate-y-0.5">
                                <Plus size={16} strokeWidth={3} /> Add Members
                             </button>
                         </div>
                         
-                        <div className="bg-[#1a1a1a] rounded-xl border border-[#272729] p-3 flex items-center justify-between group cursor-pointer hover:border-gray-600 transition-colors" onClick={() => onPanelAction('generate_invite')}>
+                        <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#272729] p-3 flex items-center justify-between group cursor-pointer hover:border-blue-400 dark:hover:border-gray-600 transition-colors shadow-sm" onClick={() => onPanelAction('generate_invite')}>
                            <div className="flex items-center gap-3 overflow-hidden">
-                              <div className="w-8 h-8 rounded-full bg-blue-600/20 text-blue-500 flex items-center justify-center shrink-0"><Link size={14}/></div>
+                              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-500 flex items-center justify-center shrink-0 border border-blue-200 dark:border-transparent"><Link size={16} strokeWidth={2.5} /></div>
                               <div className="truncate">
-                                 <p className="text-sm font-bold text-blue-400 truncate">{activeRoomDetails?.inviteCode ? `inv_${activeRoomDetails.inviteCode}` : 'Generate Invite Link'}</p>
-                                 <p className="text-[10px] text-gray-500 truncate">Share to let others join</p>
+                                 <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 truncate">{activeRoomDetails?.inviteCode ? `inv_${activeRoomDetails.inviteCode}` : 'Generate Invite Link'}</p>
+                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 truncate mt-0.5">Share to let others join</p>
                               </div>
                            </div>
-                           <Copy size={16} className="text-gray-600 group-hover:text-white" />
+                           <Copy size={18} strokeWidth={2.5} className="text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white transition-colors" />
                         </div>
                       </div>
                     )}
 
                     {/* Member List */}
-                    <div className="p-4 border-b border-[#272729]">
-                       <p className="text-xs font-bold text-gray-500 uppercase mb-3">Members ({activeMembers.length})</p>
+                    <div className="p-4 border-b border-gray-200 dark:border-[#272729] transition-colors">
+                       <p className="text-[10px] font-extrabold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-3">Members ({activeMembers.length})</p>
                        <div className="space-y-2">
                           {activeMembers.map((m: any) => {
                              const isMemberAdmin = m.role?.toLowerCase() === 'admin' || creatorId === m.id;
                              const isMemberCreator = creatorId === m.id;
                              
                              return (
-                               <div key={m.id} className="flex items-center justify-between group py-1">
+                               <div key={m.id} className="flex items-center justify-between group py-1.5 px-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-xl transition-colors">
                                   <div className="flex items-center gap-3">
-                                     <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-xs font-bold text-white shrink-0 relative">
-                                        {m.name?.charAt(0) || 'U'}
-                                        {(m.isOnline || (presence[m.id] && presence[m.id].online)) && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-[#0a0a0a] rounded-full"></div>}
+                                     <div className="w-10 h-10 rounded-[1rem] bg-gray-200 dark:bg-gray-800 flex items-center justify-center text-sm font-extrabold text-gray-500 dark:text-white shrink-0 relative border border-gray-300 dark:border-transparent overflow-hidden">
+                                        {m.avatar_url || m.avatarUrl ? (
+                                            <img src={m.avatar_url || m.avatarUrl} alt={m.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                            m.name?.charAt(0) || 'U'
+                                        )}
+                                        {(m.isOnline || (presence[m.id] && presence[m.id].online)) && <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-[#0a0a0a] rounded-full shadow-sm"></div>}
                                      </div>
                                      <div>
-                                        <p className="text-sm font-medium text-gray-200 leading-tight">{m.id === user?.id ? 'You' : m.name}</p>
-                                        <p className="text-[10px] text-gray-500">@{m.username}</p>
+                                        <p className="text-sm font-extrabold text-gray-900 dark:text-gray-200 leading-tight">{m.id === user?.id ? 'You' : m.name}</p>
+                                        <p className="text-[10px] font-bold text-gray-500 mt-0.5">@{m.username}</p>
                                      </div>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                     {isMemberCreator && <span className="text-[9px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/30">Creator</span>}
-                                     {!isMemberCreator && isMemberAdmin && <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/30">Admin</span>}
+                                     {isMemberCreator && <span className="text-[9px] font-extrabold uppercase tracking-widest bg-yellow-100 dark:bg-yellow-500/20 text-yellow-700 dark:text-yellow-500 px-2 py-1 rounded-md border border-yellow-200 dark:border-yellow-500/30">Creator</span>}
+                                     {!isMemberCreator && isMemberAdmin && <span className="text-[9px] font-extrabold uppercase tracking-widest bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 px-2 py-1 rounded-md border border-purple-200 dark:border-purple-500/30">Admin</span>}
                                      
                                      {amIAdmin && m.id !== user?.id && !isMemberCreator && (
-                                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity bg-[#1a1a1a] rounded px-1">
-                                           {!isMemberAdmin && <button onClick={() => onPanelAction('promote_admin', m.id)} className="p-1 text-green-500 hover:bg-white/10 rounded" title="Make Admin"><Shield size={14}/></button>}
-                                           <button onClick={() => onPanelAction('remove_member', m.id)} className="p-1 text-red-500 hover:bg-white/10 rounded" title="Kick"><UserMinus size={14}/></button>
+                                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 transition-opacity bg-white dark:bg-[#1a1a1a] rounded-lg px-1.5 py-1 border border-gray-200 dark:border-[#272729] shadow-sm">
+                                           {!isMemberAdmin && <button onClick={() => onPanelAction('promote_admin', m.id)} className="p-1.5 text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-white/10 rounded-md transition-colors" title="Make Admin"><Shield size={16} strokeWidth={2.5}/></button>}
+                                           <button onClick={() => onPanelAction('remove_member', m.id)} className="p-1.5 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-white/10 rounded-md transition-colors" title="Kick"><UserMinus size={16} strokeWidth={2.5}/></button>
                                         </div>
                                      )}
                                   </div>
@@ -371,16 +389,16 @@ export const ChatGroupWindow = ({
                        </div>
                     </div>
 
-                    <div className="p-4 space-y-2">
-                       {/* LOGIC FIX: Admin can only leave if there's at least one other admin to take over */}
+                    <div className="p-4 space-y-3">
+                       <h4 className="text-[10px] font-extrabold text-red-400 dark:text-red-500/50 uppercase tracking-widest px-2 mb-2">Danger Zone</h4>
                        {canLeaveGroup && (
-                         <button onClick={() => onPanelAction('leave_group')} className="w-full flex items-center gap-3 p-3 text-orange-500 hover:bg-orange-500/10 rounded-xl transition-colors font-medium text-sm">
-                            <LogOut size={18}/> Leave Squad
+                         <button onClick={() => onPanelAction('leave_group')} className="w-full flex items-center gap-3 p-3.5 bg-orange-50 hover:bg-orange-100 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 border border-orange-100 dark:border-transparent text-orange-600 dark:text-orange-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
+                            <LogOut size={18} strokeWidth={2.5}/> Leave Squad
                          </button>
                        )}
                        {amICreator && (
-                         <button onClick={() => onPanelAction('delete_group')} className="w-full flex items-center gap-3 p-3 text-red-500 hover:bg-red-500/10 rounded-xl transition-colors font-medium text-sm">
-                            <Trash2 size={18}/> Delete Squad
+                         <button onClick={() => onPanelAction('delete_group')} className="w-full flex items-center gap-3 p-3.5 bg-red-50 hover:bg-red-100 dark:bg-red-500/10 dark:hover:bg-red-500/20 border border-red-100 dark:border-transparent text-red-600 dark:text-red-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
+                            <Trash2 size={18} strokeWidth={2.5}/> Delete Squad
                          </button>
                        )}
                     </div>
@@ -394,33 +412,40 @@ export const ChatGroupWindow = ({
       <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Add Friends to Squad"
          footer={
             <>
-               <button onClick={() => setShowAddModal(false)} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</button>
-               <button onClick={submitAddMembers} disabled={selectedFriends.length === 0 || isAdding} className="px-5 py-2 bg-blue-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-blue-500 flex items-center gap-2">
-                  {isAdding && <Loader2 size={14} className="animate-spin" />} Add {selectedFriends.length > 0 ? `(${selectedFriends.length})` : ''}
+               <button onClick={() => setShowAddModal(false)} className="px-5 py-3 text-sm font-extrabold text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+               <button onClick={submitAddMembers} disabled={selectedFriends.length === 0 || isAdding} className="px-6 py-3 bg-blue-600 disabled:opacity-50 text-white text-sm font-extrabold rounded-2xl hover:bg-blue-500 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all hover:-translate-y-0.5">
+                  {isAdding && <Loader2 size={16} className="animate-spin" strokeWidth={3} />} Add {selectedFriends.length > 0 ? `(${selectedFriends.length})` : ''}
                </button>
             </>
          }
       >
-         <div className="max-h-64 overflow-y-auto scrollbar-hide pr-2">
+         <div className="max-h-72 overflow-y-auto scrollbar-hide pr-1 py-2">
             {isLoadingFriends ? (
-                <div className="flex justify-center p-6"><Loader2 className="animate-spin text-blue-500" /></div>
+                <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-blue-600 dark:text-blue-500" strokeWidth={3} /></div>
             ) : friends.length === 0 ? (
-                <p className="text-center text-gray-500 text-sm py-4">All your friends are already in this squad, or you have no friends to add.</p>
+                <div className="text-center p-6 bg-gray-50 dark:bg-[#0a0a0a] rounded-2xl border-2 border-dashed border-gray-200 dark:border-[#272729]">
+                   <p className="text-gray-500 font-bold text-sm">All friends are in this squad.</p>
+                   <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-widest">Or you have no friends to add</p>
+                </div>
             ) : (
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                    {friends.map(friend => (
-                      <div key={friend.id} onClick={() => toggleFriendSelection(friend.id)} className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all border ${selectedFriends.includes(friend.id) ? 'bg-blue-600/10 border-blue-500/50' : 'bg-[#1a1a1a] border-[#272729] hover:border-gray-600'}`}>
-                         <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-gray-700 overflow-hidden">
-                               <img src={friend.avatar_url || `https://ui-avatars.com/api/?name=${friend.name}&background=random`} alt="" className="w-full h-full object-cover" />
+                      <div key={friend.id} onClick={() => toggleFriendSelection(friend.id)} className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all border-2 shadow-sm ${selectedFriends.includes(friend.id) ? 'bg-blue-50 dark:bg-white/10 border-blue-500 dark:border-white/20' : 'bg-gray-50 dark:bg-[#1a1a1a] border-gray-200 dark:border-[#272729] hover:border-gray-300 dark:hover:border-gray-600'}`}>
+                         <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 rounded-[1rem] bg-gray-200 dark:bg-gray-800 overflow-hidden border border-gray-300 dark:border-transparent shrink-0 flex items-center justify-center font-extrabold text-gray-500 dark:text-gray-300">
+                               {friend.avatar_url ? (
+                                  <img src={friend.avatar_url} alt="" className="w-full h-full object-cover" />
+                               ) : (
+                                  friend.name?.charAt(0) || 'F'
+                               )}
                             </div>
                             <div>
-                               <p className="text-sm font-bold text-white leading-tight">{friend.name}</p>
-                               <p className="text-[10px] text-gray-500">@{friend.username}</p>
+                               <p className="text-sm font-extrabold text-gray-900 dark:text-white leading-tight">{friend.name}</p>
+                               <p className="text-[10px] font-bold text-gray-500 mt-0.5">@{friend.username}</p>
                             </div>
                          </div>
-                         <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${selectedFriends.includes(friend.id) ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-500'}`}>
-                            {selectedFriends.includes(friend.id) && <Check size={12} strokeWidth={3} />}
+                         <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${selectedFriends.includes(friend.id) ? 'bg-blue-600 border-blue-600 text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)]' : 'border-gray-300 dark:border-gray-600'}`}>
+                            {selectedFriends.includes(friend.id) && <Check size={14} strokeWidth={3} />}
                          </div>
                       </div>
                    ))}
@@ -431,24 +456,27 @@ export const ChatGroupWindow = ({
 
       {/* --- EDIT SQUAD MODAL --- */}
       <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Squad Info">
-        <form onSubmit={submitEditGroup} className="space-y-4">
+        <form onSubmit={submitEditGroup} className="space-y-5 py-2">
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Group Name</label>
-                <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500" required />
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Group Name</label>
+                <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner transition-all" required />
             </div>
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Group Image URL</label>
-                <input type="url" value={editAvatarUrl} onChange={e => setEditAvatarUrl(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="https://example.com/image.png" />
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Group Image URL</label>
+                <input type="url" value={editAvatarUrl} onChange={e => setEditAvatarUrl(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-inner transition-all" placeholder="https://example.com/image.png" />
             </div>
             <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Visibility</label>
-                <select value={editVisibility} onChange={e => setEditVisibility(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#272729] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 appearance-none">
-                   <option value="public">Public - anyone can search and join</option>
-                   <option value="private">Private - invite code only</option>
-                </select>
+                <label className="block text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-2">Visibility</label>
+                <div className="relative">
+                   <select value={editVisibility} onChange={e => setEditVisibility(e.target.value)} className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#272729] rounded-2xl px-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none shadow-inner transition-all cursor-pointer">
+                      <option value="public">Public - anyone can search and join</option>
+                      <option value="private">Private - invite code only</option>
+                   </select>
+                   <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">▼</div>
+                </div>
             </div>
-            <button type="submit" disabled={!editName.trim() || isEditing} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 mt-4">
-                {isEditing ? <Loader2 size={16} className="animate-spin" /> : "Save Changes"}
+            <button type="submit" disabled={!editName.trim() || isEditing} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-extrabold py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 mt-6 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] hover:-translate-y-0.5">
+                {isEditing ? <Loader2 size={18} className="animate-spin" strokeWidth={3} /> : "Save Changes"}
             </button>
         </form>
       </Modal>

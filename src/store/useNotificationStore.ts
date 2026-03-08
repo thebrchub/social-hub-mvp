@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 
-// FIX: Updated to match our actual real-time logic (DM_REQ instead of FRIEND_REQ)
 export type NotificationType = 'DM_REQ' | 'MESSAGE' | 'SYSTEM';
 
 export interface Notification {
@@ -10,41 +9,44 @@ export interface Notification {
   message: string;
   time: string;
   read: boolean;
-  data?: any; // For extra data like raw backend payloads
+  data?: any;
 }
 
 interface NotificationState {
   notifications: Notification[];
   unreadCount: number;
+  // --- NEW COUNTERS FOR SIDEBAR ---
+  unreadChatsCount: number;
+  pendingFriendsCount: number;
+  
   addNotification: (n: Omit<Notification, 'id' | 'read'>) => void;
   setNotifications: (notifications: Notification[]) => void;
   markAsRead: (id: string) => void;
   markAllRead: () => void;
   removeNotification: (id: string) => void;
   clearAll: () => void;
+  
+  // --- NEW ACTIONS ---
+  setUnreadChatsCount: (count: number) => void;
+  setPendingFriendsCount: (count: number) => void;
+  incrementPendingFriends: () => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
-  // Clean slate for production - No more mock data!
   notifications: [],
   unreadCount: 0,
+  unreadChatsCount: 0,
+  pendingFriendsCount: 0,
 
   addNotification: (n) => set((state) => {
-    // Generate a transient ID if the backend didn't provide one in the data payload
     const newId = n.data?.id || Date.now().toString();
-    
-    // Prevent duplicate notifications (useful for WebSocket reconnects)
-    if (state.notifications.some(existing => existing.id === newId)) {
-        return state;
-    }
-
+    if (state.notifications.some(existing => existing.id === newId)) return state;
     return {
       notifications: [{ ...n, id: newId, read: false }, ...state.notifications],
       unreadCount: state.unreadCount + 1
     };
   }),
 
-  // Super useful for bulk loading from an API
   setNotifications: (notifications) => set(() => ({
     notifications,
     unreadCount: notifications.filter(n => !n.read).length
@@ -71,5 +73,10 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     };
   }),
 
-  clearAll: () => set({ notifications: [], unreadCount: 0 })
+  clearAll: () => set({ notifications: [], unreadCount: 0 }),
+
+  // --- NEW ACTION IMPLEMENTATIONS ---
+  setUnreadChatsCount: (count) => set({ unreadChatsCount: count }),
+  setPendingFriendsCount: (count) => set({ pendingFriendsCount: count }),
+  incrementPendingFriends: () => set((state) => ({ pendingFriendsCount: state.pendingFriendsCount + 1 }))
 }));
