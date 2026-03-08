@@ -46,7 +46,7 @@ const VidMatches = () => {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const activeRoomIdRef = useRef<string | null>(null);
   
-  const [peerId, setPeerId] = useState<string | null>(null);
+  const [, setPeerId] = useState<string | null>(null);
   const peerIdRef = useRef<string | null>(null);
   
   const setRoomSync = (id: string | null) => { setActiveRoomId(id); activeRoomIdRef.current = id; };

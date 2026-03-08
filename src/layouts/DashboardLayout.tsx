@@ -292,7 +292,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             </h2>
             <button onClick={() => setShowNotifications(false)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded-full hover:bg-gray-100 dark:hover:bg-[#272729] transition-colors"><X size={20} strokeWidth={2.5} /></button>
           </div>
-          <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#030303]"><NotificationsPanel onClose={() => setShowNotifications(false)} /></div>
+          <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#030303]"><NotificationsPanel /></div>
         </div>
       </>
 

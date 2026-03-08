@@ -3,7 +3,7 @@ import { Search, Plus, Loader2, Users, PhoneIncoming, PhoneOutgoing, PhoneMissed
 export const ChatSidebar = ({ 
   rooms, requests, groupInvites, callHistory, activeTab, setActiveTab, selectedRoomId, setSelectedRoomId, 
   presence, user, formatTime, newUsername, setNewUsername, isCreating, handleCreateDM,
-  isLoadingSidebar, handleRequestAction, handleGroupInviteAction, setShowGroupModal, handleCallLogClick
+  isLoadingSidebar, handleGroupInviteAction, setShowGroupModal, handleCallLogClick
 }: any) => {
   
   const groupRooms = rooms.filter((r: any) => r.type === 'group' || r.type === 'GROUP');

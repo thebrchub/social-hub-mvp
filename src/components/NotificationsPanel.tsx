@@ -3,7 +3,7 @@ import { useNotificationStore, type Notification } from '../store/useNotificatio
 import { Check, X, MessageCircle, Info, Loader2, CheckCircle2, Bell } from 'lucide-react';
 import { api } from '../services/api';
 
-const NotificationsPanel = ({ onClose }: { onClose?: () => void }) => {
+const NotificationsPanel = () => {
   const { notifications: storeNotifications, markAllRead, removeNotification } = useNotificationStore();
   
   const [dmRequests, setDmRequests] = useState<any[]>([]);
