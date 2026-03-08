@@ -305,7 +305,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 </div>
                 <button onClick={toggleSidebar} className="hidden md:flex p-2 border border-transparent hover:bg-white dark:hover:bg-[#272729] hover:border-gray-200 dark:hover:border-[#343536] rounded-xl text-gray-500 dark:text-gray-400 transition-all hover:-translate-y-0.5"><Menu size={20} strokeWidth={2.5} /></button>
                 <div className="flex items-center gap-2 font-display font-bold text-2xl text-gray-900 dark:text-white tracking-tight cursor-pointer" onClick={() => navigate('/dashboard')}>
-                    <img src="/logo.svg" alt="zQuab Logo" className="w-11 h-11 object-contain drop-shadow-sm shrink-0" />
+                    <img src="/logo.svg" alt="zQuab Logo" className="w-12 h-12 object-contain drop-shadow-sm shrink-0" />
                     <span className="hidden md:block">zQuab</span>
                 </div>
               </div>
