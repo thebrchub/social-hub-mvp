@@ -113,10 +113,12 @@ export const ChatWindow = ({
       }
   };
 
-  const handleTouchStart = (e: React.TouchEvent, msgId: string) => {
+  // FIX: Removed unused 'msgId' from start handler
+  const handleTouchStart = (e: React.TouchEvent) => {
       swipeStartX.current = e.touches[0].clientX;
   };
 
+  // Keep msgId here since we DO use it to update the DOM
   const handleTouchMove = (e: React.TouchEvent, msgId: string) => {
       if (swipeStartX.current === null) return;
       const currentX = e.touches[0].clientX;
@@ -130,7 +132,8 @@ export const ChatWindow = ({
       }
   };
 
-  const handleTouchEnd = (e: React.TouchEvent, msg: any, msgId: string) => {
+ // FIX: Removed unused 'e' parameter
+  const handleTouchEnd = (msg: any, msgId: string) => {
       if (swipeCurrentX.current && swipeCurrentX.current > 50) {
           setReplyingTo(msg);
       }
@@ -277,9 +280,9 @@ export const ChatWindow = ({
                               key={msgId} 
                               className={`flex ${isMe ? 'justify-end' : 'justify-start'} group cursor-pointer relative -mx-4 px-4 py-0.5`}
                               onDoubleClick={() => setReplyingTo(msg)}
-                              onTouchStart={(e) => handleTouchStart(e, msgId)}
+                              onTouchStart={(e) => handleTouchStart(e)}
                               onTouchMove={(e) => handleTouchMove(e, msgId)}
-                              onTouchEnd={(e) => handleTouchEnd(e, msg, msgId)}
+                              onTouchEnd={() => handleTouchEnd(msg, msgId)}
                           >
                              
                              <div className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 dark:bg-[#1a1a1a] text-gray-500 transition-opacity duration-200 ${swipingMsgId === msgId && (swipeCurrentX.current || 0) > 40 ? 'opacity-100' : 'opacity-0'} ${isMe ? 'right-full mr-2' : 'left-full ml-2'}`}>
