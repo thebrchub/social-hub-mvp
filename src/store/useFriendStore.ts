@@ -1,51 +1,34 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
-import { useAuthStore } from './useAuthStore';
+
+interface Friend {
+  id: string;
+  username: string;
+  name: string;
+  avatar_url: string;
+  last_seen_at: string;
+  is_online: boolean;
+}
 
 interface FriendStore {
-  friends: any[];
+  friends: Friend[];
   isLoading: boolean;
-  hasFetched: boolean;
   fetchFriends: (force?: boolean) => Promise<void>;
 }
 
 export const useFriendStore = create<FriendStore>((set, get) => ({
   friends: [],
   isLoading: false,
-  hasFetched: false,
   fetchFriends: async (force = false) => {
-    if (get().hasFetched && !force) return; 
-    
+    if (!force && get().friends.length > 0) return;
     set({ isLoading: true });
     try {
-      const res = await api.get('/rooms?limit=50');
-      const rooms = Array.isArray(res) ? res : res?.data || [];
-      
-      const userId = useAuthStore.getState().user?.id;
-
-      // Transform DM rooms into "Friends"
-      const mappedFriends = rooms
-        .filter((r: any) => r.type === 'DM' || r.type === 'private')
-        .map((r: any) => {
-           // Find the partner in the members array
-           const partner = r.members?.find((m: any) => m.id !== userId);
-           return {
-             id: partner?.id || r.room_id,
-             room_id: r.room_id, // Store roomId so we can delete the connection later
-             name: partner?.name || r.name || 'Unknown',
-             username: partner?.username || r.friend_username,
-             avatar_url: partner?.avatar_url || partner?.avatarUrl || r.avatar_url,
-             friends_since: r.created_at || r.last_message_at,
-             is_online: partner?.is_online || false
-           };
-        })
-        .filter((f: any) => f.username); // Ensure it's a valid mapped user
-
-      set({ friends: mappedFriends, hasFetched: true });
+      // STRICTLY fetch from friends API, not rooms!
+      const res = await api.get('/friends'); 
+      set({ friends: Array.isArray(res) ? res : res.data || [], isLoading: false });
     } catch (error) {
-      console.error("Failed to fetch friends via rooms:", error);
-    } finally {
-      set({ isLoading: false });
+      console.error("Failed to fetch friends", error);
+      set({ friends: [], isLoading: false });
     }
-  },
+  }
 }));

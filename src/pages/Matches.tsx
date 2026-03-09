@@ -21,6 +21,9 @@ const Matches = () => {
   const theme = useThemeStore(state => state.theme);
 
   const [status, setStatus] = useState<'IDLE' | 'SEARCHING' | 'CHATTING'>('IDLE');
+  // FIX 1: Track why we are searching to show the correct UI text
+  const [searchReason, setSearchReason] = useState<'MANUAL' | 'PARTNER_LEFT'>('MANUAL');
+  
   const [messages, setMessages] = useState<{id: number, text: string, isMe: boolean, isSystem?: boolean}[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -60,13 +63,14 @@ const Matches = () => {
     };
   }, [status]);
 
-  const startSearch = useCallback(async () => {
+  const startSearch = useCallback(async (reason: 'MANUAL' | 'PARTNER_LEFT' = 'MANUAL') => {
     if (!isConnected) {
       alert("Connecting to server... please wait.");
       return;
     }
 
     setStatus('SEARCHING');
+    setSearchReason(reason);
     setMessages([]); 
     setShowEmojiPicker(false);
     setActiveRoomId(null);
@@ -110,6 +114,10 @@ const Matches = () => {
         if (msg.from !== user?.id) {
            setMessages(prev => [...prev, { id: Date.now(), text: msg.text, isMe: false }]);
            
+           // FIX 2: Play the specific match.mp3 sound for stranger chats
+           const audio = new Audio('/match.mp3');
+           audio.play().catch(() => {});
+           
            if (msg.fromName) {
              setPartner(prev => {
                if (!prev || prev.name !== msg.fromName) {
@@ -122,8 +130,10 @@ const Matches = () => {
         return;
       }
 
+      // FIX 1: Auto-Reconnect!
+      // When the stranger disconnects or leaves, throw them back into the pool with the 'PARTNER_LEFT' reason.
       if ((msg.type === 'stranger_disconnected' || msg.type === 'room_closed') && rId === activeRoomIdRef.current) {
-         startSearch();
+         startSearch('PARTNER_LEFT');
          return;
       }
     };
@@ -160,7 +170,7 @@ const Matches = () => {
         setModalType('FRIEND_SUCCESS'); 
       } else {
         setModalType('NONE');
-        startSearch(); 
+        startSearch('MANUAL'); // Manual skip
       }
     } catch (error) {
       console.error(`Failed to execute ${actionType}:`, error);
@@ -300,12 +310,9 @@ const Matches = () => {
           {status === 'IDLE' && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in duration-500 overflow-hidden relative">
               
-              {/* FIXED: Dynamic Orbiting Background Animation */}
               <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none opacity-60 dark:opacity-100">
-                {/* Breathe Blur Glow */}
                 <div className="absolute w-[300px] h-[300px] bg-blue-400/20 dark:bg-blue-600/10 blur-3xl rounded-full animate-pulse"></div>
                 
-                {/* Orbiting Rings (Dashed/Dotted) */}
                 <div className="absolute w-[220px] h-[220px] md:w-[280px] md:h-[280px] border border-dashed border-gray-200 dark:border-blue-900/30 rounded-full animate-spin [animation-duration:15s] flex items-center justify-center">
                     <div className="w-2 h-2 bg-blue-500/50 rounded-full absolute -top-1"></div>
                 </div>
@@ -314,21 +321,16 @@ const Matches = () => {
                 </div>
               </div>
 
-              {/* Central Premium Button / Identity Container */}
               <div className="relative group z-10">
-                 {/* Breathe Aura */}
                  <div className="absolute inset-0 bg-blue-300/30 dark:bg-blue-600/20 blur-2xl rounded-[3rem] md:rounded-[4rem] scale-125 animate-pulse transition-transform duration-700"></div>
                  
-                 {/* FIXED: Masked Circular Container designed for future image swap */}
                  <button 
-                   onClick={startSearch}
+                   onClick={() => startSearch('MANUAL')}
                    disabled={!isConnected}
                    className="relative w-36 h-36 md:w-48 md:h-48 bg-blue-600 dark:bg-[#1E3A8A] border border-blue-500 dark:border-[#1E40AF] rounded-[3rem] md:rounded-[4rem] flex items-center justify-center hover:-translate-y-2 transition-all cursor-pointer shadow-[inset_0_4px_12px_rgba(255,255,255,0.4),_0_15px_30px_rgba(37,99,235,0.3)] dark:shadow-[inset_0_2px_8px_rgba(255,255,255,0.1),_0_20px_40px_rgba(0,0,0,0.5)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 overflow-hidden group-hover:shadow-[inset_0_4px_12px_rgba(255,255,255,0.6),_0_20px_40px_rgba(37,99,235,0.5)] dark:group-hover:shadow-[inset_0_2px_8px_rgba(255,255,255,0.2),_0_30px_60px_rgba(0,0,0,0.7)]"
                  >
-                    {/* Placeholder Icon (Preparing for <img src="..." /> replacement) */}
                     <Zap className="w-14 h-14 md:w-20 md:h-20 text-white drop-shadow-md group-hover:scale-110 transition-transform" strokeWidth={2.5} />
                     
-                    {/* 3D Border Overlay */}
                     <div className="absolute inset-0 rounded-[3rem] md:rounded-[4rem] border-4 border-white/10 dark:border-white/5 shadow-inner"></div>
                  </button>
                </div>
@@ -350,8 +352,15 @@ const Matches = () => {
                      <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-blue-600 dark:text-blue-500 animate-spin" strokeWidth={2.5} />
                   </div>
                </div>
-               <h3 className="mt-8 md:mt-10 text-xl md:text-2xl font-display font-extrabold text-gray-900 dark:text-white transition-colors">Looking for someone...</h3>
-               <p className="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-medium mt-2 transition-colors">Searching the global network</p>
+               
+               {/* FIX 1: Change text dynamically based on why we are searching */}
+               <h3 className="mt-8 md:mt-10 text-xl md:text-2xl font-display font-extrabold text-gray-900 dark:text-white transition-colors">
+                 {searchReason === 'PARTNER_LEFT' ? 'Partner disconnected...' : 'Looking for someone...'}
+               </h3>
+               <p className="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-medium mt-2 transition-colors">
+                 {searchReason === 'PARTNER_LEFT' ? 'They left the chat. Finding a new match for you.' : 'Searching the global network'}
+               </p>
+               
                <button 
                   onClick={() => setModalType('LEAVE_WARNING')} 
                   className="mt-8 px-6 py-2.5 rounded-full bg-red-50 dark:bg-[#451212] text-red-600 dark:text-red-400 text-xs md:text-sm font-extrabold flex items-center gap-2 hover:bg-red-100 dark:hover:bg-[#5c1c1c] transition-all border border-red-100 dark:border-transparent"

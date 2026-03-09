@@ -66,8 +66,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     else document.documentElement.classList.remove('dark');
   }, [theme]);
 
-  const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'} | null>(null);
-  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+  const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'|'warning'} | null>(null);
+  const showToast = (msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
     setToastMessage({ msg, type });
     setTimeout(() => setToastMessage(null), 3000);
   };
@@ -89,11 +89,13 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
       const fetchGlobalRequests = async () => {
           if (hasFetched) return; 
           try {
-              const res = await api.get('/rooms/requests');
-              const reqs = Array.isArray(res) ? res : res.data || [];
-              setRequestsData(reqs.length); 
-              const pureFriendReqs = reqs.filter((r: any) => !r.last_message_preview || r.last_message_preview.trim() === '');
-              useNotificationStore.getState().setPendingFriendsCount(pureFriendReqs.length);
+              const dmRes = await api.get('/rooms/requests').catch(() => ({ data: [] }));
+              const dmReqs = Array.isArray(dmRes) ? dmRes : dmRes?.data || [];
+              setRequestsData(dmReqs.length); 
+
+              const frRes = await api.get('/friends/requests?type=received').catch(() => ({ data: [] }));
+              const frReqs = Array.isArray(frRes) ? frRes : frRes?.data || [];
+              useNotificationStore.getState().setPendingFriendsCount(frReqs.length);
           } catch (e) {}
       };
       if (user) fetchGlobalRequests();
@@ -106,14 +108,35 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
               fetchFriends(true); 
               playNotificationSound();
           }
-          if (data.type === 'friend_request_received' || data.type === 'room_invite') {
+          if (data.type === 'friend_request_received') {
               useNotificationStore.getState().incrementPendingFriends();
+              playNotificationSound();
+              showToast("New friend request received!", "info");
+              
+              useNotificationStore.getState().addNotification({
+                  type: 'FRIEND_REQ',
+                  title: 'New Friend Request',
+                  message: `Someone wants to connect with you!`,
+                  time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                  data: data
+              });
+          }
+          if (data.type === 'room_invite') {
               setRequestsData(cachedRequestsCount + 1);
               resetDot(); 
               playNotificationSound();
           }
-          if (data.type === 'send_message' && String(data.from) !== String(user?.id)) {
-              if (!window.location.pathname.includes('/chats')) {
+          
+          // FIX: Stop double notification sound on the Stranger Match page!
+          if (data.type === 'send_message') {
+              const isMe = String(data.from) === String(user?.id) || String(data.sender_id) === String(user?.id);
+              const isCurrentlyOnChatsPage = window.location.pathname.includes('/chats');
+              const isCurrentlyOnMatchesPage = window.location.pathname.includes('/matches');
+              
+              // Only play the default message sound if they are NOT the sender, 
+              // AND they are NOT actively looking at the DMs page,
+              // AND they are NOT actively looking at the Stranger Match page (which handles its own sounds).
+              if (!isMe && !isCurrentlyOnChatsPage && !isCurrentlyOnMatchesPage) {
                   playNotificationSound();
               }
           }
@@ -121,7 +144,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
       return unsubscribe;
   }, [subscribe, fetchFriends, user?.id, cachedRequestsCount, setRequestsData, resetDot]);
 
-  const totalNotifications = unreadCount + (hasSeenRequests ? 0 : cachedRequestsCount);
+  const totalNotifications = unreadCount + unreadChatsCount + pendingFriendsCount + (hasSeenRequests ? 0 : cachedRequestsCount);
   const showRedDot = totalNotifications > 0;
 
   const handleOpenNotifications = () => {
@@ -276,7 +299,11 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     <div className="flex flex-col h-[100dvh] w-full bg-gray-50 dark:bg-[#030303] text-gray-900 dark:text-gray-200 font-sans overflow-hidden relative transition-colors duration-300">
       
       {toastMessage && (
-        <div className={`fixed top-20 right-6 z-[99999] px-4 py-3 rounded-xl shadow-2xl animate-in slide-in-from-top-5 flex items-center gap-3 font-bold text-white text-xs sm:text-sm ${toastMessage.type === 'success' ? 'bg-blue-600' : 'bg-red-600'}`}>
+        <div className={`fixed top-20 right-6 z-[99999] px-4 py-3 rounded-xl shadow-2xl animate-in slide-in-from-top-5 flex items-center gap-3 font-bold text-white text-xs sm:text-sm ${
+           toastMessage.type === 'success' ? 'bg-green-600' : 
+           toastMessage.type === 'error' ? 'bg-red-600' : 
+           toastMessage.type === 'warning' ? 'bg-gray-800' : 'bg-blue-600'
+        }`}>
            {toastMessage.type === 'success' ? <CheckCircle2 size={18} strokeWidth={2.5} /> : <AlertTriangle size={18} strokeWidth={2.5} />}
            {toastMessage.msg}
         </div>
@@ -384,7 +411,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                  <NavItem collapsed={isSidebarCollapsed} icon={<Zap size={22} strokeWidth={2.5} />} label="Stranger Chat" active={location.pathname === '/matches'} onClick={() => { navigate('/matches'); setMobileMenuOpen(false); }} />
                  <NavItem collapsed={isSidebarCollapsed} icon={<Video size={22} strokeWidth={2.5} />} label="Stranger Cam" active={location.pathname === '/vid-matches'} onClick={() => { navigate('/vid-matches'); setMobileMenuOpen(false); }} badge="HOT" />
                  <NavItem collapsed={isSidebarCollapsed} icon={<MessageSquare size={22} strokeWidth={2.5} />} label="Messages" active={location.pathname === '/chats'} onClick={() => { navigate('/chats'); setMobileMenuOpen(false); }} badge={unreadChatsCount > 0 ? unreadChatsCount : undefined} />
+                 
                  <NavItem collapsed={isSidebarCollapsed} icon={<Users size={22} strokeWidth={2.5} />} label="Connections" active={location.pathname === '/friends'} onClick={() => { navigate('/friends'); setMobileMenuOpen(false); }} badge={pendingFriendsCount > 0 ? pendingFriendsCount : undefined} />
+                 
                  <NavItem collapsed={isSidebarCollapsed} icon={<Settings size={22} strokeWidth={2.5} />} label="Settings" active={location.pathname === '/settings'} onClick={() => { navigate('/settings'); setMobileMenuOpen(false); }} />
               </nav>
               <div className="border-t border-gray-200 dark:border-[#272729] my-4 mx-4 shrink-0"></div>
@@ -411,7 +440,6 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             {children}
          </main>
 
-         {/* --- FIX 1: ADJUSTED BREAKPOINT (lg:flex instead of xl:flex) --- */}
          <aside className="w-[350px] bg-gray-50 dark:bg-[#030303] border-l border-gray-200 dark:border-[#272729] hidden lg:flex flex-col p-6 transition-colors duration-300 h-full overflow-hidden">
             <div className="bg-white dark:bg-[#1A1A1B] rounded-3xl border border-gray-200 dark:border-[#343536] p-4 flex flex-col flex-1 min-h-0 shadow-sm hover:shadow-md transition-all duration-300">
                <div className="flex items-center gap-3 mb-2 shrink-0">

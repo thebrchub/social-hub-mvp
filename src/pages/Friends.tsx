@@ -3,25 +3,30 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useFriendStore } from '../store/useFriendStore';
-import { useWebSocket } from '../providers/WebSocketProvider'; // <-- NEW
+import { useWebSocket } from '../providers/WebSocketProvider'; 
 import { Check, X, MessageSquare, Trash2, Users, Clock, Loader2, AlertTriangle, CheckCircle2, Send, Search, LayoutGrid, List } from 'lucide-react';
 import Modal from '../components/Modal';
 
 interface FriendRequest {
-  room_id: string;
-  sender_name: string;
-  sender_username: string;
-  sender_avatar: string;
+  request_id?: number;
+  name?: string;
+  username?: string;
+  avatar_url?: string;
+  // Kept for fallback, though based on JSON they might not be needed
+  sender_name?: string;
+  sender_username?: string;
+  sender_avatar?: string;
   receiver_name?: string;
   receiver_username?: string;
   receiver_avatar?: string;
-  last_message_at: string;
+  created_at?: string;
+  last_message_at?: string;
 }
 
 const Friends = () => {
   const navigate = useNavigate();
   const { friends, fetchFriends } = useFriendStore();
-  const { subscribe } = useWebSocket(); // <-- NEW
+  const { subscribe } = useWebSocket(); 
 
   const [receivedReqs, setReceivedReqs] = useState<FriendRequest[]>([]);
   const [sentReqs, setSentReqs] = useState<FriendRequest[]>([]);
@@ -44,12 +49,16 @@ const Friends = () => {
     setIsLoading(true);
     try {
       await fetchFriends(true); 
+
       const [recRes, sentRes] = await Promise.all([
-        api.get('/rooms/requests?type=received'),
-        api.get('/rooms/requests?type=sent')
+        api.get('/friends/requests?type=received'),
+        api.get('/friends/requests?type=sent')
       ]);
+
+      // FIX: Robust array extraction
       setReceivedReqs(Array.isArray(recRes) ? recRes : recRes?.data || []);
       setSentReqs(Array.isArray(sentRes) ? sentRes : sentRes?.data || []);
+
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -57,15 +66,17 @@ const Friends = () => {
     }
   };
 
-  // --- NEW: Silent fetch for real-time WebSocket updates (no loading spinner flash) ---
   const fetchRequestsSilent = async () => {
     try {
       const [recRes, sentRes] = await Promise.all([
-        api.get('/rooms/requests?type=received'),
-        api.get('/rooms/requests?type=sent')
+        api.get('/friends/requests?type=received'),
+        api.get('/friends/requests?type=sent')
       ]);
+
+      // FIX: Robust array extraction
       setReceivedReqs(Array.isArray(recRes) ? recRes : recRes?.data || []);
       setSentReqs(Array.isArray(sentRes) ? sentRes : sentRes?.data || []);
+
     } catch (error) {
       console.error("Failed to silently sync requests:", error);
     }
@@ -73,12 +84,10 @@ const Friends = () => {
 
   useEffect(() => { fetchAllData(); }, []);
 
-  // --- NEW: WebSocket Listener for Withdrawn Requests ---
   useEffect(() => {
     if (!subscribe) return;
     const unsubscribe = subscribe((msg: any) => {
-      // If someone cancels a request they sent us, refresh the lists silently!
-      if (msg.type === 'friend_request_withdrawn') {
+      if (msg.type === 'friend_request_withdrawn' || msg.type === 'friend_request_received') {
          fetchRequestsSilent();
       }
     });
@@ -94,29 +103,88 @@ const Friends = () => {
     );
   }, [friends, searchQuery]);
 
-  const handleAction = async (action: 'accept' | 'reject', roomId: string) => {
-    setProcessingId(roomId);
+  const handleAction = async (action: 'accept' | 'reject', username: string) => {
+    if (!username) return showToast("Error: Missing Username", "error");
+
+    setProcessingId(username);
+
     try {
-      await api.post(`/rooms/${roomId}/${action}`);
-      showToast(action === 'reject' ? `Request rejected.` : `Request accepted!`, 'success');
-      await fetchAllData(); 
+      await api.post(`/friends/${action}`, { username });
+
+      showToast(
+        action === 'reject' ? "Request rejected." : "Request accepted!",
+        "success"
+      );
+
+      await fetchAllData();
+
     } catch (error: any) {
-      showToast(error.message || `Failed to process action.`, 'error');
+      const backendMsg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        `API Error ${error.response?.status}: Failed to ${action}`;
+
+      showToast(backendMsg, 'error');
+
     } finally {
       setProcessingId(null);
       setConfirmConfig(null);
     }
   };
 
-  // --- NEW: Handle Outgoing Request Withdrawal ---
-  const handleWithdraw = async (username: string) => {
+  const handleRemoveFriend = async (username: string) => {
+    if (!username) return;
+
     setProcessingId(username);
+
+    try {
+      await api.delete(`/friends/${username}`);
+
+      showToast("Friend removed successfully.", "success");
+
+      await fetchAllData();
+
+    } catch (error: any) {
+      const backendMsg =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to remove friend.";
+
+      showToast(backendMsg, "error");
+
+    } finally {
+      setProcessingId(null);
+      setConfirmConfig(null);
+    }
+  };
+
+  const handleWithdraw = async (username: string) => {
+    if (!username) return;
+
+    setProcessingId(username);
+
     try {
       await api.delete(`/friends/request/${username}`);
-      showToast("Friend request withdrawn.", 'success');
-      setSentReqs(prev => prev.filter(req => req.receiver_username !== username));
+
+      showToast("Friend request withdrawn.", "success");
+
+      // Update state immediately to reflect UI change
+      setSentReqs(prev =>
+        prev.filter(
+          req =>
+            req.username !== username &&
+            req.receiver_username !== username
+        )
+      );
+
     } catch (error: any) {
-      showToast(error.message || "Failed to withdraw request.", 'error');
+      const backendMsg =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to withdraw request.";
+
+      showToast(backendMsg, "error");
+
     } finally {
       setProcessingId(null);
     }
@@ -124,11 +192,15 @@ const Friends = () => {
 
   const handleMessageFriend = async (username: string) => {
     try {
-      const res = await api.post('/rooms', { username });
+      const res = await api.post("/rooms", { username });
       const targetRoomId = res.data?.room_id || res.data?.id;
-      navigate('/chats', { state: { autoOpenRoomId: targetRoomId } });
+
+      navigate("/chats", {
+        state: { autoOpenRoomId: targetRoomId }
+      });
+
     } catch (error: any) {
-      showToast("Failed to start conversation.", 'error');
+      showToast("Failed to start conversation.", "error");
     }
   };
 
@@ -199,19 +271,19 @@ const Friends = () => {
              }>
                 {activeTab === 'friends' && (
                   filteredFriends.length > 0 ? filteredFriends.map((f) => (
-                    <FriendCard key={f.room_id} f={f} viewMode={viewMode} formatDate={formatDate} onMessage={handleMessageFriend} onRemove={(friend: any) => setConfirmConfig({ title: "Remove Connection", desc: `Remove ${friend.name}? Chat history will be lost.`, actionLabel: "Remove", isDanger: true, onConfirm: () => handleAction('reject', friend.room_id) })} />
+                    <FriendCard key={f.id} f={f} viewMode={viewMode} formatDate={formatDate} onMessage={handleMessageFriend} onRemove={(friend: any) => setConfirmConfig({ title: "Remove Connection", desc: `Remove ${friend.name}? Chat history will be lost.`, actionLabel: "Remove", isDanger: true, onConfirm: () => handleRemoveFriend(friend.username) })} />
                   )) : <EmptyState icon={<Users className="w-10 h-10 md:w-12 md:h-12" strokeWidth={2.5} />} title={searchQuery ? "No results" : "Quiet here..."} description={searchQuery ? "No one matches that name." : "Connect with people to fill your squad!"} />
                 )}
 
                 {(activeTab === 'received' || activeTab === 'sent') && (
-                  (activeTab === 'received' ? receivedReqs : sentReqs).length > 0 ? (activeTab === 'received' ? receivedReqs : sentReqs).map((req) => (
+                  (activeTab === 'received' ? receivedReqs : sentReqs).length > 0 ? (activeTab === 'received' ? receivedReqs : sentReqs).map((req, i) => (
                     <RequestCard 
-                       key={req.room_id} 
+                       key={req.request_id || req.username || i} 
                        req={req} 
                        type={activeTab} 
                        formatDate={formatDate} 
                        onAction={handleAction} 
-                       onWithdraw={handleWithdraw} // <-- PASSED DOWN
+                       onWithdraw={handleWithdraw}
                        processingId={processingId} 
                        viewMode={viewMode} 
                     />
@@ -253,7 +325,7 @@ const FriendCard = ({ f, viewMode, formatDate, onMessage, onRemove }: any) => (
       <div className="min-w-0 overflow-hidden">
         <h3 className="text-gray-900 dark:text-white font-extrabold text-xs md:text-base truncate">{f.name}</h3>
         <p className="text-[10px] md:text-xs font-bold text-blue-600 dark:text-blue-400 truncate">@{f.username}</p>
-        <p className="text-[8px] md:text-[10px] font-bold text-gray-400 dark:text-gray-500 mt-0.5 md:mt-1 uppercase tracking-widest truncate">Connected {formatDate(f.friends_since)}</p>
+        <p className="text-[8px] md:text-[10px] font-bold text-gray-400 dark:text-gray-500 mt-0.5 md:mt-1 uppercase tracking-widest truncate">Last seen {formatDate(f.last_seen_at)}</p>
       </div>
     </div>
     <div className={`flex items-center gap-1.5 md:gap-2 shrink-0 ${viewMode === 'grid' ? 'mt-4 md:mt-6 w-full' : ''}`}>
@@ -263,37 +335,43 @@ const FriendCard = ({ f, viewMode, formatDate, onMessage, onRemove }: any) => (
   </div>
 );
 
-const RequestCard = ({ req, type, formatDate, onAction, onWithdraw, processingId, viewMode }: any) => (
-  <div className={`bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#272729] rounded-[1.5rem] md:rounded-[2rem] hover:border-gray-300 dark:hover:border-gray-600 transition-all shadow-sm hover:shadow-md group flex ${viewMode === 'grid' ? 'flex-col p-4 md:p-6 items-center text-center' : 'p-3 md:p-4 items-center justify-between'}`}>
-    
-    <div className={`flex items-center gap-3 md:gap-4 ${viewMode === 'grid' ? 'flex-col' : 'min-w-0 flex-1'}`}>
-      <img src={(type === 'received' ? req.sender_avatar : req.receiver_avatar) || `https://ui-avatars.com/api/?name=${type === 'received' ? req.sender_name : req.receiver_name}&background=random`} alt="Avatar" className={`${viewMode === 'grid' ? 'w-16 h-16 md:w-20 md:h-20' : 'w-10 h-10 md:w-14 md:h-14'} rounded-2xl md:rounded-3xl bg-gray-100 dark:bg-gray-800 object-cover border border-gray-200 dark:border-[#343536] shrink-0`} />
-      <div className="min-w-0 overflow-hidden">
-        <h3 className="text-gray-900 dark:text-white font-extrabold text-xs md:text-base truncate">{type === 'received' ? req.sender_name : req.receiver_name}</h3>
-        <p className="text-[10px] md:text-xs font-bold text-blue-600 dark:text-blue-400 truncate">@{type === 'received' ? req.sender_username : req.receiver_username}</p>
-        <p className="text-[8px] md:text-[10px] font-bold text-gray-400 dark:text-gray-500 mt-0.5 md:mt-1 uppercase tracking-widest truncate">{type === 'received' ? 'Received' : 'Sent'} {formatDate(req.last_message_at)}</p>
+const RequestCard = ({ req, type, formatDate, onAction, onWithdraw, processingId, viewMode }: any) => {
+  // FIX: Always use name/username/avatar_url regardless of 'type' based on JSON
+  const name = req.name || req.sender_name || req.receiver_name || 'Unknown User';
+  const username = req.username || req.sender_username || req.receiver_username || '';
+  const avatar = req.avatar_url || req.avatarUrl || req.sender_avatar || req.receiver_avatar;
+
+  return (
+    <div className={`bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#272729] rounded-[1.5rem] md:rounded-[2rem] hover:border-gray-300 dark:hover:border-gray-600 transition-all shadow-sm hover:shadow-md group flex ${viewMode === 'grid' ? 'flex-col p-4 md:p-6 items-center text-center' : 'p-3 md:p-4 items-center justify-between'}`}>
+      
+      <div className={`flex items-center gap-3 md:gap-4 ${viewMode === 'grid' ? 'flex-col' : 'min-w-0 flex-1'}`}>
+        <img src={avatar || `https://ui-avatars.com/api/?name=${name}&background=random`} alt="Avatar" className={`${viewMode === 'grid' ? 'w-16 h-16 md:w-20 md:h-20' : 'w-10 h-10 md:w-14 md:h-14'} rounded-2xl md:rounded-3xl bg-gray-100 dark:bg-gray-800 object-cover border border-gray-200 dark:border-[#343536] shrink-0`} />
+        <div className="min-w-0 overflow-hidden">
+          <h3 className="text-gray-900 dark:text-white font-extrabold text-xs md:text-base truncate">{name}</h3>
+          <p className="text-[10px] md:text-xs font-bold text-blue-600 dark:text-blue-400 truncate">@{username}</p>
+          <p className="text-[8px] md:text-[10px] font-bold text-gray-400 dark:text-gray-500 mt-0.5 md:mt-1 uppercase tracking-widest truncate">{type === 'received' ? 'Received' : 'Sent'} {formatDate(req.created_at || req.last_message_at)}</p>
+        </div>
+      </div>
+      
+      <div className={`flex flex-col gap-2 md:gap-2.5 ${viewMode === 'grid' ? 'mt-4 md:mt-5 w-full' : 'shrink-0 ml-2 w-28 md:w-32'}`}>
+        {type === 'received' ? (
+          <>
+            <button onClick={() => onAction('accept', username)} disabled={processingId === username} className={`py-2 md:py-2.5 bg-blue-600 dark:bg-[#1E3A8A] text-white rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold flex items-center justify-center gap-1 md:gap-2 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all ${viewMode === 'grid' ? 'flex-1' : 'w-full px-4'}`}>
+              {processingId === username ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin mx-auto" /> : <><Check size={16} strokeWidth={3} /> Accept</>}
+            </button>
+            <button onClick={() => onAction('reject', username)} disabled={processingId === username} className={`py-2 md:py-2.5 bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold border border-gray-200 dark:border-[#343536] flex items-center justify-center gap-1 md:gap-2 transition-all ${viewMode === 'grid' ? 'flex-1' : 'w-full px-4'}`}>
+              <X size={16} strokeWidth={3} /> Reject
+            </button>
+          </>
+        ) : (
+          <button onClick={() => onWithdraw(username)} disabled={processingId === username} className={`py-2 md:py-2.5 bg-red-50 dark:bg-[#451212] text-red-600 dark:text-red-400 rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold flex items-center justify-center gap-1 md:gap-2 border border-red-100 dark:border-[#5c1c1c] shadow-[inset_0_2px_4px_rgba(255,255,255,0.7)] dark:shadow-none hover:bg-red-600 hover:text-white transition-all ${viewMode === 'grid' ? 'w-full' : 'w-full px-4'}`}>
+            {processingId === username ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin mx-auto" /> : <><Trash2 size={16} strokeWidth={2.5} /> Cancel</>}
+          </button>
+        )}
       </div>
     </div>
-    
-    <div className={`flex flex-col gap-2 md:gap-2.5 ${viewMode === 'grid' ? 'mt-4 md:mt-5 w-full' : 'shrink-0 ml-2 w-28 md:w-32'}`}>
-      {type === 'received' ? (
-        <>
-          <button onClick={() => onAction('accept', req.room_id)} disabled={processingId === req.room_id} className={`py-2 md:py-2.5 bg-blue-600 dark:bg-[#1E3A8A] text-white rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold flex items-center justify-center gap-1 md:gap-2 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all ${viewMode === 'grid' ? 'flex-1' : 'w-full px-4'}`}>
-            {processingId === req.room_id ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin mx-auto" /> : <><Check size={16} strokeWidth={3} /> Accept</>}
-          </button>
-          <button onClick={() => onAction('reject', req.room_id)} disabled={processingId === req.room_id} className={`py-2 md:py-2.5 bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold border border-gray-200 dark:border-[#343536] flex items-center justify-center gap-1 md:gap-2 transition-all ${viewMode === 'grid' ? 'flex-1' : 'w-full px-4'}`}>
-            <X size={16} strokeWidth={3} /> Reject
-          </button>
-        </>
-      ) : (
-        // --- NEW: Withdraw Request Button ---
-        <button onClick={() => onWithdraw(req.receiver_username)} disabled={processingId === req.receiver_username} className={`py-2 md:py-2.5 bg-red-50 dark:bg-[#451212] text-red-600 dark:text-red-400 rounded-xl md:rounded-2xl text-xs md:text-sm font-extrabold flex items-center justify-center gap-1 md:gap-2 border border-red-100 dark:border-[#5c1c1c] shadow-[inset_0_2px_4px_rgba(255,255,255,0.7)] dark:shadow-none hover:bg-red-600 hover:text-white transition-all ${viewMode === 'grid' ? 'w-full' : 'w-full px-4'}`}>
-          {processingId === req.receiver_username ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin mx-auto" /> : <><Trash2 size={16} strokeWidth={2.5} /> Cancel Request</>}
-        </button>
-      )}
-    </div>
-  </div>
-);
+  );
+};
 
 const TabButton = ({ active, onClick, icon, label, badge }: any) => (
   <button onClick={onClick} className={`flex items-center justify-center gap-1.5 md:gap-2 px-4 md:px-6 py-2 md:py-3 text-[10px] md:text-sm font-extrabold rounded-xl md:rounded-2xl transition-all relative shrink-0 border-2 ${active ? 'bg-blue-600 dark:bg-[#1E3A8A] text-white border-blue-500 dark:border-[#1E40AF] shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)]' : 'bg-white dark:bg-[#272729] text-gray-500 dark:text-gray-400 border-gray-100 dark:border-[#343536] hover:bg-gray-50 dark:hover:bg-[#343536]'}`}>

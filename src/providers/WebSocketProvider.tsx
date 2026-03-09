@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 
-// Define the shape of our context
 interface WebSocketContextType {
   isConnected: boolean;
   sendMessage: (roomId: string, text: string, tempId?: string) => void;
@@ -10,7 +9,7 @@ interface WebSocketContextType {
   markDelivered: (roomId: string) => void;
   lastMessage: any | null; 
   subscribe: (callback: (msg: any) => void) => () => void;
-  sendRaw: (payload: any) => void; // <-- ADDED: For WebRTC Signaling
+  sendRaw: (payload: any) => void; 
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -42,7 +41,6 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     const token = localStorage.getItem('aarpaar_access_token');
     if (!token) return;
 
-    // Use your actual production WebSocket URL
     const wsUrl = `wss://aarpaar-api.brchub.me/ws?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -55,16 +53,27 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
 
     ws.onmessage = (event) => {
       try {
-        let parsed = JSON.parse(event.data);
-        if (parsed.type === 'private' && parsed.data) parsed = parsed.data;
-        
-        console.log("[WS IN]", parsed);
-        setLastMessage(parsed); 
-        
-        listeners.current.forEach(cb => cb(parsed));
-        
+        // FIX: Split by newline in case the backend batches multiple JSON objects in one frame
+        const stringPayloads = typeof event.data === 'string' ? event.data.split('\n') : [event.data];
+
+        stringPayloads.forEach(payloadStr => {
+           if (!payloadStr.trim()) return; // Skip empty lines
+           
+           try {
+             let parsed = JSON.parse(payloadStr);
+             if (parsed.type === 'private' && parsed.data) parsed = parsed.data;
+             
+             console.log("[WS IN]", parsed);
+             setLastMessage(parsed); 
+             
+             listeners.current.forEach(cb => cb(parsed));
+           } catch (parseErr) {
+             console.error("[WS] Failed to parse individual message chunk:", payloadStr, parseErr);
+           }
+        });
+
       } catch (err) {
-        console.error("Failed to parse WS message", err);
+        console.error("Failed to process WS message block", err);
       }
     };
 
@@ -73,7 +82,6 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
       setIsConnected(false);
       wsRef.current = null;
       
-      // Auto-reconnect if we are still supposed to be authenticated
       if (isAuthenticated) {
         console.log("[WS] Attempting reconnect in 3s...");
         reconnectTimeoutRef.current = setTimeout(connect, 3000);
@@ -82,14 +90,12 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
 
     ws.onerror = (error) => {
       console.error("[WS] Error", error);
-      // Let onclose handle the reconnection
     };
   };
 
   const disconnect = () => {
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     if (wsRef.current) {
-      // Strip event listeners before closing. 
       wsRef.current.onopen = null;
       wsRef.current.onmessage = null;
       wsRef.current.onerror = null;
@@ -100,7 +106,6 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     }
   };
 
-  // Connect when authenticated, disconnect when logged out
   useEffect(() => {
     if (isAuthenticated && user?.username) {
       connect();
@@ -110,7 +115,6 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     return () => disconnect();
   }, [isAuthenticated, user?.username]);
 
-  // --- EXPOSED METHODS ---
 
   const sendMessage = (roomId: string, text: string, tempId?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -124,7 +128,6 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     wsRef.current.send(JSON.stringify(payload));
   };
 
-  // --- NEW: sendRaw function for WebRTC signaling ---
   const sendRaw = (payload: any) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.warn("[WS OUT] Cannot send raw payload, websocket is not open.");
@@ -159,7 +162,7 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
       markDelivered,
       lastMessage,
       subscribe,
-      sendRaw // <-- EXPOSED HERE
+      sendRaw 
     }}>
       {children}
     </WebSocketContext.Provider>

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
+import { useFriendStore } from '../store/useFriendStore'; 
 import { useWebSocket } from '../providers/WebSocketProvider';
 import { ChatSidebar } from '../components/chats/ChatSidebar';
 import { ChatWindow } from '../components/chats/ChatWindow';
@@ -21,6 +22,7 @@ export default function Chats() {
   const user = useAuthStore(state => state.user);
   const location = useLocation();
   const { sendMessage, sendRaw, sendTypingStart, markRead, markDelivered, isConnected, subscribe } = useWebSocket();
+  const { friends, fetchFriends } = useFriendStore(); 
 
   const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'|'warning'} | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<{title: string, desc: string, onConfirm: ()=>void} | null>(null);
@@ -37,7 +39,11 @@ export default function Chats() {
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  
+  // FIX: Drafts & ReplyingTo states separated by Room ID
+  const [inputValue, setInputValue] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [draftReplies, setDraftReplies] = useState<Record<string, ChatMessage | null>>({});
   
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
@@ -64,7 +70,6 @@ export default function Chats() {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const selectedRoomIdRef = useRef<string | null>(null);
   selectedRoomIdRef.current = selectedRoomId;
-  const [inputValue, setInputValue] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
@@ -85,7 +90,8 @@ export default function Chats() {
   const [callMicOff, setCallMicOff] = useState(false);
   const [callCamOff, setCallCamOff] = useState(false);
 
-  const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
+  const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const outgoingAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const userMap = useMemo(() => {
      const map: Record<string, any> = {};
@@ -98,31 +104,23 @@ export default function Chats() {
      return map;
   }, [rooms]);
 
-  const wsSendSignaling = (payload: any) => {
-      if (sendRaw) sendRaw(payload);
-  };
+  const wsSendSignaling = (payload: any) => { if (sendRaw) sendRaw(payload); };
 
-  const playSound = (type: 'message' | 'ring') => {
-      if (type === 'ring') {
-         if (!ringtoneAudioRef.current) {
-            ringtoneAudioRef.current = new Audio('/ringtone.mp3');
-            ringtoneAudioRef.current.loop = true;
-         }
-         ringtoneAudioRef.current.play().catch(() => {});
+  const playSound = (type: 'message' | 'ring_in' | 'ring_out') => {
+      if (type === 'ring_in') {
+         if (!incomingAudioRef.current) { incomingAudioRef.current = new Audio('/ringtone.mp3'); incomingAudioRef.current.loop = true; }
+         incomingAudioRef.current.play().catch(() => {});
+      } else if (type === 'ring_out') {
+         if (!outgoingAudioRef.current) { outgoingAudioRef.current = new Audio('/ringtone.mp3'); outgoingAudioRef.current.loop = true; }
+         outgoingAudioRef.current.play().catch(() => {});
       } else {
-         const audio = new Audio('/message.mp3');
-         audio.play().catch(() => {});
+         const audio = new Audio('/message.mp3'); audio.play().catch(() => {});
       }
   };
 
-  const stopRingtone = () => {
-      if (ringtoneAudioRef.current) {
-          const audio = ringtoneAudioRef.current;
-          audio.pause();
-          audio.currentTime = 0;
-          audio.src = ''; 
-          ringtoneAudioRef.current = null;
-      }
+  const stopAllRingtones = () => {
+      if (incomingAudioRef.current) { incomingAudioRef.current.pause(); incomingAudioRef.current.currentTime = 0; incomingAudioRef.current.src = ''; incomingAudioRef.current = null; }
+      if (outgoingAudioRef.current) { outgoingAudioRef.current.pause(); outgoingAudioRef.current.currentTime = 0; outgoingAudioRef.current.src = ''; outgoingAudioRef.current = null; }
   };
 
   const showToast = (msg: string, type: 'success'|'error'|'info'|'warning' = 'success') => {
@@ -168,7 +166,6 @@ export default function Chats() {
       let fetchedRooms = Array.isArray(roomsRes) ? roomsRes : roomsRes?.data || [];
       const fetchedReqs = Array.isArray(requestsRes) ? requestsRes : requestsRes?.data || [];
       const fetchedInvites = Array.isArray(invitesRes) ? invitesRes : invitesRes?.data || [];
-      
       const histData = historyRes?.data || historyRes;
       const fetchedHistory = Array.isArray(histData) ? histData : (histData?.calls || histData?.data || []);
 
@@ -183,15 +180,13 @@ export default function Chats() {
                  room.name = partner.name || partner.username;
                  room.friend_username = partner.username;
                  room.partner_id = partner.id;
-                 const pAvatar = partner.avatar_url || partner.avatarUrl;
-                 room.avatar_url = pAvatar;
-                 room.avatarUrl = pAvatar; 
+                 room.avatar_url = partner.avatar_url || partner.avatarUrl;
+                 room.avatarUrl = partner.avatar_url || partner.avatarUrl; 
                  setPresence(prev => ({ ...prev, [partner.id]: { online: partner.is_online || false, lastSeen: partner.last_seen_at || null } }));
              }
          } else if (room.type === 'group' || room.type === 'GROUP') {
-             const gAvatar = room.group_avatar || room.avatarUrl || room.avatar_url;
-             room.avatar_url = gAvatar;
-             room.avatarUrl = gAvatar;
+             room.avatar_url = room.group_avatar || room.avatarUrl || room.avatar_url;
+             room.avatarUrl = room.group_avatar || room.avatarUrl || room.avatar_url;
          }
          return room;
       });
@@ -207,8 +202,7 @@ export default function Chats() {
     } catch (error) { console.error("Failed to fetch chats data:", error); } finally { setIsLoadingSidebar(false); }
   };
 
-  useEffect(() => { fetchChatsData(); }, [location.state?.autoOpenRoomId]); 
-  useEffect(() => { fetchChatsData(); }, []);
+  useEffect(() => { fetchChatsData(); fetchFriends(); }, [location.state?.autoOpenRoomId]); 
 
   useEffect(() => {
     if (isConnected && markDelivered && rooms.length > 0 && !hasSentInitialDelivery.current) {
@@ -218,15 +212,7 @@ export default function Chats() {
   }, [isConnected, rooms]);
 
   const fetchMessages = async (roomId: string, loadOlder = false) => {
-    if (!loadOlder) { 
-        setIsMessagesLoading(true); 
-        setMessageCursor(null); 
-        // --- FIX: INSTANT UI CLEAR TO PREVENT CHAT BLEEDING ---
-        setMessages([]); 
-    } else { 
-        setIsLoadingOlder(true); 
-    }
-
+    if (!loadOlder) { setIsMessagesLoading(true); setMessageCursor(null); setMessages([]); } else { setIsLoadingOlder(true); }
     try {
       let url = `/rooms/${roomId}/messages?limit=50`;
       if (loadOlder && messageCursor) url += `&cursor=${messageCursor}`;
@@ -253,39 +239,29 @@ export default function Chats() {
          setRooms(prev => prev.map(r => r.room_id === roomId ? { ...r, unread_count: 0 } : r));
       }
     } catch (error) { 
-        console.error("Failed to fetch messages:", error); 
-        
-        // --- FIX: INJECT PENDING REQUEST PREVIEW MESSAGE IF API FAILS ---
         if (!loadOlder) {
             const pendingReq = requests.find(r => r.room_id === roomId);
             if (pendingReq && pendingReq.last_message_preview) {
-                setMessages([{
-                    id: 'preview',
-                    text: pendingReq.last_message_preview,
-                    sender_id: pendingReq.sender_id || 'unknown',
-                    from: pendingReq.sender_id || 'unknown',
-                    created_at: pendingReq.last_message_at || new Date().toISOString(),
-                    status: 'delivered'
-                } as any]);
-            } else {
-                setMessages([]);
-            }
+                setMessages([{ id: 'preview', text: pendingReq.last_message_preview, sender_id: pendingReq.sender_id || 'unknown', from: pendingReq.sender_id || 'unknown', created_at: pendingReq.last_message_at || new Date().toISOString(), status: 'delivered' } as any]);
+            } else { setMessages([]); }
         }
-    } finally { 
-        setIsMessagesLoading(false); 
-        setIsLoadingOlder(false); 
-    }
+    } finally { setIsMessagesLoading(false); setIsLoadingOlder(false); }
   };
 
+  // FIX: Load drafts when changing rooms
   useEffect(() => {
-    if (!selectedRoomId) {
-        setMessages([]); // Double ensure clean slate if null
-        return;
-    }
+    if (!selectedRoomId) { setMessages([]); return; }
+    
+    // 1. Fetch text draft from LocalStorage
+    const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
+    setInputValue(savedDrafts[selectedRoomId] || "");
+    
+    // 2. Fetch reply state from memory
+    setReplyingTo(draftReplies[selectedRoomId] || null);
+
     setIsSearchingMessages(false); setMessageSearchQuery("");
     setShowInfoPanel(false); setShowEmojiPicker(false);
     setTypingData(null);
-    // Instant clear when ID changes
     setMessages([]);
     fetchMessages(selectedRoomId, false);
   }, [selectedRoomId, isConnected]); 
@@ -304,14 +280,10 @@ export default function Chats() {
       if (showInfoPanel && activeRoom && selectedRoomId) fetchRoomDetails(selectedRoomId, activeRoom.type);
   }, [showInfoPanel, selectedRoomId]);
 
-  // ------------------------------------------------------------------
-  // WEBSOCKET LISTENER
-  // ------------------------------------------------------------------
   useEffect(() => {
     if (!subscribe) return;
     wsRef.current = (payload: any) => { wsSendSignaling(payload); };
     const unsubscribe = subscribe(async (parsed: any) => {
-      
       if (parsed.type === 'presence_online') setPresence(prev => ({ ...prev, [parsed.userId]: { online: true, lastSeen: null }}));
       if (parsed.type === 'presence_offline') setPresence(prev => ({ ...prev, [parsed.userId]: { online: false, lastSeen: parsed.lastSeenAt }}));
 
@@ -327,13 +299,13 @@ export default function Chats() {
          if (parsed.roomId === selectedRoomIdRef.current) fetchRoomDetails(parsed.roomId, 'group');
       }
 
-      if (parsed.type === 'send_message') {
+      if (parsed.type === 'send_message' || parsed.type === 'group_message') {
          const incomingText = parsed.text || parsed.content || "New message";
-         const targetRoomId = String(parsed.roomId || parsed.room_id);
+         const targetRoomId = String(parsed.roomId || parsed.room_id || parsed.groupId);
          const currentRoomId = String(selectedRoomIdRef.current);
-         const isMe = String(parsed.from) === String(user?.id);
-
+         const isMe = String(parsed.from) === String(user?.id) || String(parsed.sender_id) === String(user?.id);
          const isCurrentlyLookingAtThisChat = document.visibilityState === 'visible' && targetRoomId === currentRoomId;
+         
          if (!isMe && !isCurrentlyLookingAtThisChat) {
              playSound('message');
          }
@@ -352,12 +324,17 @@ export default function Chats() {
          });
 
          if (isMe) {
-            setMessages(prev => prev.map(m => (m.status === 'sending' && (m.text === incomingText || m.content === incomingText)) ? { ...m, status: 'sent', id: parsed.id } : m));
+            setMessages(prev => prev.map(m => {
+               if (m._tempId === parsed.tempId || m.id === parsed.tempId || (m.status === 'sending' && (m.text === incomingText || m.content === incomingText))) {
+                  return { ...m, status: 'sent', id: parsed.id || parsed.message_id };
+               }
+               return m;
+            }));
          } else if (targetRoomId === currentRoomId) {
              setMessages(prev => {
                 if (parsed.id && prev.some(m => m.id === parsed.id)) return prev;
                 if (parsed.tempId && prev.some(m => m._tempId === parsed.tempId)) return prev;
-                return [...prev, { id: parsed.id || parsed.tempId || Date.now().toString(), sender_id: parsed.from, text: incomingText, created_at: new Date().toISOString(), status: 'read', type: parsed.msgType || 'chat' }];
+                return [...prev, { id: parsed.id || parsed.tempId || Date.now().toString(), sender_id: parsed.from || parsed.sender_id, text: incomingText, created_at: new Date().toISOString(), status: 'read', type: parsed.msgType || 'chat' }];
              });
              if (isConnected) triggerMarkRead(targetRoomId);
              setTimeout(() => scrollToBottom("auto"), 10); 
@@ -365,14 +342,14 @@ export default function Chats() {
              if (isConnected && markDelivered) markDelivered(targetRoomId);
              useNotificationStore.getState().setUnreadChatsCount(useNotificationStore.getState().unreadChatsCount + 1);
              const isFriendRoom = rooms.some((r: any) => String(r.room_id) === targetRoomId);
-             if (!isFriendRoom) {
-                 showToast("New message request received!", "info");
-                 fetchChatsData();
-             }
+             if (!isFriendRoom) { fetchChatsData(); }
          }
       }
 
-      if (parsed.type === 'message_sent_confirm') setMessages(prev => prev.map(m => m._tempId === parsed.tempId ? { ...m, status: (m.status === 'delivered' || m.status === 'read') ? m.status : 'sent', id: parsed.id } : m));
+      if (parsed.type === 'message_sent_confirm') {
+          setMessages(prev => prev.map(m => (m._tempId === parsed.tempId || m.id === parsed.tempId) ? { ...m, status: (m.status === 'delivered' || m.status === 'read') ? m.status : 'sent', id: parsed.id } : m));
+      }
+
       if (parsed.type === 'message_delivered' && String(parsed.roomId) === String(selectedRoomIdRef.current) && String(parsed.userId) !== String(user?.id)) {
          setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && (m.status === 'sending' || m.status === 'sent' || !m.status)) ? { ...m, status: 'delivered' } : m));
       }
@@ -380,52 +357,34 @@ export default function Chats() {
          setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && m.status !== 'read') ? { ...m, status: 'read' } : m));
       }
 
-      if (parsed.type === 'call_ring') { playSound('ring'); setIncomingCall(parsed); }
-      
+      if (parsed.type === 'call_ring') { playSound('ring_in'); setIncomingCall(parsed); }
       if (parsed.type === 'call_reject' || parsed.type === 'call_end' || parsed.type === 'call_dismiss' || parsed.type === 'error') {
-          stopRingtone();
-          setIncomingCall(null);
-          
+          stopAllRingtones(); setIncomingCall(null);
           if (parsed.type === 'call_reject') showToast(`Call ${parsed.reason || 'declined'}`, 'error');
           if (parsed.type === 'call_end') showToast('Call ended', 'warning');
-          if (parsed.type === 'error') {
-              showToast(parsed.message || "Action not allowed", "error");
-              if (!parsed.message?.toLowerCase().includes("call friends")) return; 
-          }
-          
-          endActiveCall();
-          fetchChatsData(); 
+          if (parsed.type === 'error') { showToast(parsed.message || "Action not allowed", "error"); if (!parsed.message?.toLowerCase().includes("call friends")) return; }
+          endActiveCall(); fetchChatsData(); 
       }
-
       if (parsed.type === 'call_accept') {
-          stopRingtone();
-          setActiveCall((prev: any) => prev ? { ...prev, isAccepted: true } : prev);
+          stopAllRingtones(); setActiveCall((prev: any) => prev ? { ...prev, isAccepted: true } : prev);
           if (pcRef.current) return;
           const pc = await initPeerConnection(parsed.from, parsed.callId);
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
+          const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
           wsSendSignaling({ type: 'call_offer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(offer) });
       }
       if (parsed.type === 'call_offer') {
           const pc = pcRef.current || await initPeerConnection(parsed.from, parsed.callId);
           await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+          const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
           wsSendSignaling({ type: 'call_answer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(answer) });
-          iceCandidateQueue.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)));
-          iceCandidateQueue.current = [];
+          iceCandidateQueue.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c))); iceCandidateQueue.current = [];
       }
       if (parsed.type === 'call_answer') {
-          if (pcRef.current) {
-             await pcRef.current.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
-             iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c)));
-             iceCandidateQueue.current = [];
-          }
+          if (pcRef.current) { await pcRef.current.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp))); iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c))); iceCandidateQueue.current = []; }
       }
       if (parsed.type === 'ice_candidate') {
           const candidate = JSON.parse(parsed.candidate);
-          if (pcRef.current && pcRef.current.remoteDescription) pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-          else iceCandidateQueue.current.push(candidate);
+          if (pcRef.current && pcRef.current.remoteDescription) pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)); else iceCandidateQueue.current.push(candidate);
       }
     });
     return unsubscribe;
@@ -433,30 +392,18 @@ export default function Chats() {
 
   const getMedia = async (video: boolean) => {
       try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-              video: video ? { width: { ideal: 1280 } } : false 
-          });
-          localStreamRef.current = stream;
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-          return stream;
-      } catch (err) {
-          showToast('Camera/Mic permission denied', 'error');
-          return null;
-      }
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: video ? { width: { ideal: 1280 } } : false });
+          localStreamRef.current = stream; if (localVideoRef.current) localVideoRef.current.srcObject = stream; return stream;
+      } catch (err) { showToast('Camera/Mic permission denied', 'error'); return null; }
   };
 
   const initPeerConnection = async (targetUserId: string, callId: string) => {
       const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-      pcRef.current = pc;
-      iceCandidateQueue.current = [];
+      pcRef.current = pc; iceCandidateQueue.current = [];
       pc.onicecandidate = (e) => { if (e.candidate) wsSendSignaling({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); };
       pc.ontrack = (e) => { 
           const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== stream) {
-              remoteVideoRef.current.srcObject = stream;
-              remoteVideoRef.current.play().catch(console.error); 
-          } 
+          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== stream) { remoteVideoRef.current.srcObject = stream; remoteVideoRef.current.play().catch(console.error); } 
       };
       pc.oniceconnectionstatechange = () => { if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') endActiveCall(); };
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
@@ -464,38 +411,28 @@ export default function Chats() {
   };
 
   const handleStartCall = async (type: 'audio' | 'video', isGroupCall: boolean) => {
-      if (!selectedRoomId) return;
-      if (isGroupCall) return; 
+      if (!selectedRoomId || isGroupCall) return; 
       const targetRoom = rooms.find(r => r.room_id === selectedRoomId);
       if (!targetRoom || !targetRoom.partner_id) return; 
-      const stream = await getMedia(type === 'video');
-      if (!stream) return;
+      const stream = await getMedia(type === 'video'); if (!stream) return;
+      playSound('ring_out'); 
       const callId = `call_${Date.now()}`;
       setActiveCall({ id: callId, roomId: selectedRoomId, peerName: targetRoom.name || 'User', isVideo: type === 'video', peerId: targetRoom.partner_id, isAccepted: false });
       wsSendSignaling({ type: 'call_ring', to: targetRoom.partner_id, callId, roomId: selectedRoomId, callType: type, hasVideo: type === 'video' });
   };
 
   const acceptIncomingCall = async (resolvedName: string) => {
-      stopRingtone();
-      const parsed = incomingCall;
-      setIncomingCall(null);
+      stopAllRingtones(); const parsed = incomingCall; setIncomingCall(null);
       const stream = await getMedia(parsed.hasVideo);
-      if (!stream) {
-         wsSendSignaling({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' });
-         return;
-      }
+      if (!stream) { wsSendSignaling({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' }); return; }
       setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: resolvedName, isVideo: parsed.hasVideo, peerId: parsed.from, isAccepted: true });
       wsSendSignaling({ type: 'call_accept', to: parsed.from, callId: parsed.callId });
   };
 
-  const rejectIncomingCall = () => {
-      stopRingtone();
-      wsSendSignaling({ type: 'call_reject', to: incomingCall.from, callId: incomingCall.callId, reason: 'rejected' });
-      setIncomingCall(null);
-  };
+  const rejectIncomingCall = () => { stopAllRingtones(); wsSendSignaling({ type: 'call_reject', to: incomingCall.from, callId: incomingCall.callId, reason: 'rejected' }); setIncomingCall(null); };
 
   const endActiveCall = () => {
-      stopRingtone();
+      stopAllRingtones();
       if (activeCall && activeCall.peerId) wsSendSignaling({ type: 'call_end', to: activeCall.peerId, callId: activeCall.id });
       if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
@@ -506,28 +443,21 @@ export default function Chats() {
   const handleCallLogClick = async (call: any) => {
       const isOutgoing = String(call.initiatedBy) === String(user?.id);
       const otherId = isOutgoing ? (call.peerId || call.receiverId || call.to || call.partner_id) : call.initiatedBy;
-      
       const knownUser = userMap[otherId] || Object.values(userMap).find(u => u.name === call.callerName || u.name === call.peerName);
       const targetUsername = knownUser?.username || call.callerUsername || call.peerUsername;
 
       if (targetUsername) {
-          try {
-              const res = await api.post('/rooms', { username: targetUsername });
-              setSelectedRoomId(res.data?.room_id || res.data?.id);
-              setActiveTab('chats');
-          } catch (e) {
-              showToast("Failed to open chat", "error");
-          }
-      } else {
-          showToast("User details not found to start chat", "error");
-      }
+          try { const res = await api.post('/rooms', { username: targetUsername }); setSelectedRoomId(res.data?.room_id || res.data?.id); setActiveTab('chats'); } 
+          catch (e) { showToast("Failed to open chat", "error"); }
+      } else { showToast("User details not found to start chat", "error"); }
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim() || !selectedRoomId) return;
 
-    const finalMessageText = replyingTo ? `> ${replyingTo.text || replyingTo.content}\n\n${inputValue}` : inputValue;
+    // Encode ID so we can click-to-scroll later
+    const finalMessageText = replyingTo ? `> [id:${replyingTo.id || replyingTo._tempId}] ${replyingTo.text || replyingTo.content}\n\n${inputValue}` : inputValue;
     const tempId = `tmp_${Date.now()}`;
     const newMsg: ChatMessage = { _tempId: tempId, text: finalMessageText, sender_id: user?.id, created_at: new Date().toISOString(), status: 'sending' };
 
@@ -541,183 +471,134 @@ export default function Chats() {
        return updated;
     });
     
-    setInputValue(""); setReplyingTo(null); setShowEmojiPicker(false);
+    // FIX: Clear local storage draft and state on send
+    setInputValue(""); 
+    handleSetReplyingTo(null); 
+    setShowEmojiPicker(false);
+    
+    const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
+    delete savedDrafts[selectedRoomId];
+    localStorage.setItem('chat_drafts', JSON.stringify(savedDrafts));
+
     setTimeout(() => scrollToBottom("smooth"), 50);
   };
 
+  // FIX: Save drafts to local storage dynamically
   const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputValue(e.target.value);
-    if (selectedRoomId) sendTypingStart(selectedRoomId);
+    const val = e.target.value;
+    setInputValue(val);
+    if (selectedRoomId) {
+        const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
+        savedDrafts[selectedRoomId] = val;
+        localStorage.setItem('chat_drafts', JSON.stringify(savedDrafts));
+        sendTypingStart(selectedRoomId);
+    }
   };
 
-  const onEmojiClick = (emojiObject: any) => setInputValue((prev) => prev + emojiObject.emoji);
+  // FIX: Manage reply states per room
+  const handleSetReplyingTo = (msg: ChatMessage | null) => {
+      setReplyingTo(msg);
+      if (selectedRoomId) {
+          setDraftReplies(prev => ({ ...prev, [selectedRoomId]: msg }));
+      }
+  };
+
+  const onEmojiClick = (emojiObject: any) => {
+      const newVal = inputValue + emojiObject.emoji;
+      setInputValue(newVal);
+      if (selectedRoomId) {
+          const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
+          savedDrafts[selectedRoomId] = newVal;
+          localStorage.setItem('chat_drafts', JSON.stringify(savedDrafts));
+      }
+  };
 
   let isRequest = false;
   let activeRoom = rooms.find(r => r.room_id === selectedRoomId);
-  
   if (!activeRoom && selectedRoomId) {
       const req = requests.find(r => r.room_id === selectedRoomId);
-      if (req) {
-          isRequest = true;
-          activeRoom = {
-              room_id: req.room_id,
-              type: 'DM',
-              name: req.sender_name,
-              friend_username: req.sender_username,
-              avatar_url: req.sender_avatar,
-              partner_id: req.sender_username,
-              last_message_at: new Date().toISOString(),
-              unread_count: 0
-          } as Room;
-      }
+      if (req) { isRequest = true; activeRoom = { room_id: req.room_id, type: 'DM', name: req.sender_name, friend_username: req.sender_username, avatar_url: req.sender_avatar, partner_id: req.sender_username, last_message_at: new Date().toISOString(), unread_count: 0 } as Room; }
   }
 
+  const isFriend = activeRoom?.friend_username ? friends.some(f => f.username === activeRoom?.friend_username) : false;
+
   const handleGroupInviteAction = async (groupId: string, action: 'accept' | 'decline') => {
-    try {
-      await api.post(`/groups/${groupId}/invites/${action}`);
-      await fetchChatsData();
-      if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(groupId); }
-      showToast(`Squad invite ${action}ed!`, 'success');
-    } catch (error: any) { showToast(`Failed to ${action} invite`, 'error'); }
+    try { await api.post(`/groups/${groupId}/invites/${action}`); await fetchChatsData(); if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(groupId); } showToast(`Squad invite ${action}ed!`, 'success'); } 
+    catch (error: any) { showToast(`Failed to ${action} invite`, 'error'); }
   };
 
   const handlePanelAction = async (action: string, payload?: any) => {
-      setShowInfoPanel(false); 
-      if (!selectedRoomId || !activeRoom) return; 
-      
+      setShowInfoPanel(false); if (!selectedRoomId || !activeRoom) return; 
       const isGroup = activeRoom.type === 'group' || activeRoom.type === 'GROUP';
-      const targetRoomId = selectedRoomId;
-      const targetName = activeRoom.name || 'Unknown';
-      const targetUsername = activeRoom.friend_username;
+      const targetRoomId = selectedRoomId; const targetName = activeRoom.name || 'Unknown'; const targetUsername = activeRoom.friend_username;
 
       if (isGroup) {
           switch(action) {
               case 'generate_invite':
                   try {
-                    const res = await api.post(`/groups/${targetRoomId}/invite`);
-                    const code = res?.data?.inviteCode || res?.inviteCode;
-                    if (code) {
-                        navigator.clipboard.writeText(`inv_${code}`);
-                        showToast(`Invite code inv_${code} copied!`, 'success');
-                        fetchRoomDetails(targetRoomId, 'group'); 
-                    } else showToast("Could not generate invite code.", 'error');
-                  } catch(e) { showToast("Failed to generate code", 'error'); }
-                  break;
-              case 'leave_group':
-                  setConfirmConfig({ title: "Leave Squad", desc: `Are you sure you want to leave ${targetName}?`, onConfirm: async () => { 
-                      await api.delete(`/groups/${targetRoomId}/members/${user?.id}`); 
-                      setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Left squad.", "info"); 
-                  }}); break;
-              case 'delete_group':
-                  setConfirmConfig({ title: "Delete Squad", desc: "DANGER: This permanently deletes the group for everyone. Proceed?", onConfirm: async () => { 
-                      await api.delete(`/groups/${targetRoomId}`); 
-                      setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Squad deleted.", "info"); 
-                  }}); break;
-              case 'remove_member':
-                  setConfirmConfig({ title: "Kick Member", desc: "Are you sure you want to kick this user?", onConfirm: async () => { 
-                      await api.delete(`/groups/${targetRoomId}/members/${payload}`); 
-                      fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Member kicked.", "success"); 
-                  }}); break;
-              case 'promote_admin':
-                  setConfirmConfig({ title: "Promote to Admin", desc: "Give this user admin privileges?", onConfirm: async () => { 
-                      await api.post(`/groups/${targetRoomId}/admins`, { userId: payload }); 
-                      fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Promoted to admin.", "success"); 
-                  }}); break;
+                    const res = await api.post(`/groups/${targetRoomId}/invite`); const code = res?.data?.inviteCode || res?.inviteCode;
+                    if (code) { navigator.clipboard.writeText(`inv_${code}`); showToast(`Invite code inv_${code} copied!`, 'success'); fetchRoomDetails(targetRoomId, 'group'); } 
+                    else showToast("Could not generate invite code.", 'error');
+                  } catch(e) { showToast("Failed to generate code", 'error'); } break;
+              case 'leave_group': setConfirmConfig({ title: "Leave Squad", desc: `Are you sure you want to leave ${targetName}?`, onConfirm: async () => { await api.delete(`/groups/${targetRoomId}/members/${user?.id}`); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Left squad.", "info"); }}); break;
+              case 'delete_group': setConfirmConfig({ title: "Delete Squad", desc: "DANGER: This permanently deletes the group for everyone. Proceed?", onConfirm: async () => { await api.delete(`/groups/${targetRoomId}`); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Squad deleted.", "info"); }}); break;
+              case 'remove_member': setConfirmConfig({ title: "Kick Member", desc: "Are you sure you want to kick this user?", onConfirm: async () => { await api.delete(`/groups/${targetRoomId}/members/${payload}`); fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Member kicked.", "success"); }}); break;
+              case 'promote_admin': setConfirmConfig({ title: "Promote to Admin", desc: "Give this user admin privileges?", onConfirm: async () => { await api.post(`/groups/${targetRoomId}/admins`, { userId: payload }); fetchRoomDetails(targetRoomId, 'group'); setConfirmConfig(null); showToast("Promoted to admin.", "success"); }}); break;
           }
       } else {
           switch(action) {
               case 'mute_notifications': showToast("Mute feature coming soon!", "info"); break;
+              case 'add_friend':
+                  if (!targetUsername) return showToast("Cannot add unknown user", "error");
+                  try { await api.post(`/friends/request`, { username: targetUsername }); showToast("Friend request sent!", "success"); fetchFriends(true); } 
+                  catch (e: any) { showToast(e.message || "Failed to send request", "error"); } break;
               case 'remove':
                   if (!targetUsername) return showToast("Cannot remove unknown user", "error");
-                  setConfirmConfig({ 
-                      title: "Remove Friend", desc: `Are you sure you want to remove @${targetUsername}? If you remove them, your chats will be gone forever and cannot be retrieved.`, 
-                      onConfirm: async () => { 
-                          try {
-                              await api.delete(`/friends/${targetUsername}`).catch(e => { if (e.message && !e.message.includes('Not friends')) throw e; }); 
-                              await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-                              setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Friend removed and chat deleted.", "success"); 
-                          } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to remove friend.", "error"); }
-                      }
-                  }); break;
+                  setConfirmConfig({ title: "Remove Friend", desc: `Are you sure you want to remove @${targetUsername}? If you remove them, your chats will be gone forever and cannot be retrieved.`, onConfirm: async () => { try { await api.delete(`/friends/${targetUsername}`).catch(e => { if (e.message && !e.message.includes('Not friends')) throw e; }); await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {}); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Friend removed and chat deleted.", "success"); } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to remove friend.", "error"); } }}); break;
               case 'block':
-                  setConfirmConfig({ 
-                      title: "Block User", desc: "They will no longer be able to message you. This chat will be deleted.", 
-                      onConfirm: async () => { 
-                          try {
-                              await api.post('/match/action', { room_id: targetRoomId, action: 'block', partner_username: targetUsername }); 
-                              await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-                              setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("User blocked.", "success"); 
-                          } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to block user.", "error"); }
-                      }
-                  }); break;
-              case 'report':
-                  if (targetUsername) setReportConfig({ username: targetUsername, roomId: targetRoomId }); break;
+                  setConfirmConfig({ title: "Block User", desc: "They will no longer be able to message you. This chat will be deleted.", onConfirm: async () => { try { await api.post('/match/action', { room_id: targetRoomId, action: 'block', partner_username: targetUsername }); await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {}); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("User blocked.", "success"); } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to block user.", "error"); } }}); break;
+              case 'report': if (targetUsername) setReportConfig({ username: targetUsername, roomId: targetRoomId }); break;
           }
       }
   };
 
   const submitReport = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!reportConfig || !reportReason.trim()) return;
-      setIsReporting(true);
-      try {
-          await api.post('/match/report', { reported_username: reportConfig.username, reason: reportReason.trim(), room_id: reportConfig.roomId });
-          const targetRoomId = reportConfig.roomId;
-          await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {});
-          setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setReportConfig(null); setReportReason(""); showToast("Report submitted successfully. The user has been blocked.", "success");
-      } catch (err: any) { showToast(err.message || "Failed to submit report.", "error"); } finally { setIsReporting(false); }
+      e.preventDefault(); if (!reportConfig || !reportReason.trim()) return; setIsReporting(true);
+      try { await api.post('/match/report', { reported_username: reportConfig.username, reason: reportReason.trim(), room_id: reportConfig.roomId }); const targetRoomId = reportConfig.roomId; await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {}); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setReportConfig(null); setReportReason(""); showToast("Report submitted successfully. The user has been blocked.", "success"); } 
+      catch (err: any) { showToast(err.message || "Failed to submit report.", "error"); } finally { setIsReporting(false); }
   };
 
   const handleCreateDMOrJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = newUsername.trim();
-    if (!input) return;
-    setIsCreating(true);
+    e.preventDefault(); const input = newUsername.trim(); if (!input) return; setIsCreating(true);
     try {
       if (input.startsWith('inv_') || input.length > 15) {
          const actualCode = input.startsWith('inv_') ? input.replace('inv_', '') : input;
-         await api.post(`/invite/${actualCode}`);
-         showToast("Joined squad successfully!", 'success');
-         await fetchChatsData();
+         await api.post(`/invite/${actualCode}`); showToast("Joined squad successfully!", 'success'); await fetchChatsData();
       } else {
-         const res = await api.post('/rooms', { username: input });
-         const data = res.data || res;
+         const res = await api.post('/rooms', { username: input }); const data = res.data || res;
          if (data.pending) showToast("Because their account is private, a DM request was sent!", 'info');
          else { await fetchChatsData(); setSelectedRoomId(data.room_id); setActiveTab('chats'); }
       }
       setNewUsername('');
     } catch (error: any) { 
-      const status = error.response?.status || error.status;
-      const msg = error.response?.data?.message || error.message || "";
+      const status = error.response?.status || error.status; const msg = error.response?.data?.message || error.message || "";
       if (msg.toLowerCase().includes('already')) showToast("You are already a member of this squad!", 'info');
       else if (status === 403 || msg.toLowerCase().includes('private')) showToast("This user has a private account. Send a friend request first.", 'error');
       else showToast(msg || "Failed to start chat", 'error'); 
-    } 
-    finally { setIsCreating(false); }
+    } finally { setIsCreating(false); }
   };
 
   const handleCreateGroup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!groupName.trim()) return;
-    setIsCreatingGroup(true);
+    e.preventDefault(); if (!groupName.trim()) return; setIsCreatingGroup(true);
     try {
       const res = await api.post('/groups', { name: groupName.trim(), description: groupDesc.trim(), is_private: isPrivateGroup, avatarUrl: groupAvatarUrl.trim() });
-      const data = res.data || res;
-      await fetchChatsData(); 
-      setSelectedRoomId(data.room_id || data.id);
-      setShowGroupModal(false);
-      setGroupName(""); setGroupDesc(""); setGroupAvatarUrl("");
-      showToast("Squad created!", 'success');
-    } catch (error: any) { showToast(error.message || "Failed to create squad", 'error'); } 
-    finally { setIsCreatingGroup(false); }
+      const data = res.data || res; await fetchChatsData(); setSelectedRoomId(data.room_id || data.id); setShowGroupModal(false); setGroupName(""); setGroupDesc(""); setGroupAvatarUrl(""); showToast("Squad created!", 'success');
+    } catch (error: any) { showToast(error.message || "Failed to create squad", 'error'); } finally { setIsCreatingGroup(false); }
   };
 
   const handleRequestAction = async (roomId: string, action: 'accept' | 'reject') => {
-    try {
-      await api.post(`/rooms/${roomId}/${action}`);
-      await fetchChatsData();
-      if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(roomId); }
-    } catch (error: any) { showToast(`Failed to ${action} request`, 'error'); }
+    try { await api.post(`/rooms/${roomId}/${action}`); await fetchChatsData(); if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(roomId); } } 
+    catch (error: any) { showToast(`Failed to ${action} request`, 'error'); }
   };
 
   const renderTextWithHighlights = (text: string) => {
@@ -736,7 +617,7 @@ export default function Chats() {
             user={user} formatTime={formatTime} newUsername={newUsername} setNewUsername={setNewUsername} 
             isCreating={isCreating} handleCreateDM={handleCreateDMOrJoin} isLoadingSidebar={isLoadingSidebar}
             handleRequestAction={handleRequestAction} handleGroupInviteAction={handleGroupInviteAction} setShowGroupModal={setShowGroupModal}
-            handleCallLogClick={handleCallLogClick}
+            handleCallLogClick={handleCallLogClick} userMap={userMap}
          />
          
          {activeRoom?.type === 'group' || activeRoom?.type === 'GROUP' ? (
@@ -748,7 +629,7 @@ export default function Chats() {
               setIsSearchingMessages={setIsSearchingMessages} messageSearchQuery={messageSearchQuery}
               setMessageSearchQuery={setMessageSearchQuery} scrollToBottom={scrollToBottom}
               renderTextWithHighlights={renderTextWithHighlights} handleSendMessage={handleSendMessage}
-              inputValue={inputValue} handleInput={handleInput} replyingTo={replyingTo} setReplyingTo={setReplyingTo}
+              inputValue={inputValue} handleInput={handleInput} replyingTo={replyingTo} setReplyingTo={handleSetReplyingTo}
               showEmojiPicker={showEmojiPicker} setShowEmojiPicker={setShowEmojiPicker} onEmojiClick={onEmojiClick}
               formatTime={formatTime} showInfoPanel={showInfoPanel} setShowInfoPanel={setShowInfoPanel} 
               activeRoomDetails={activeRoomDetails} isLoadingDetails={isLoadingDetails} showToast={showToast} refreshChats={fetchChatsData}
@@ -757,7 +638,7 @@ export default function Chats() {
          ) : (
            <ChatWindow 
               activeRoom={activeRoom} selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId}
-              isRequest={isRequest} 
+              isRequest={isRequest} isFriend={isFriend} 
               handleRequestAction={handleRequestAction} 
               messages={messages} user={user} presence={presence} typingData={typingData}
               isMessagesLoading={isMessagesLoading} isLoadingOlder={isLoadingOlder} hasMoreMessages={hasMoreMessages}
@@ -765,7 +646,7 @@ export default function Chats() {
               setIsSearchingMessages={setIsSearchingMessages} messageSearchQuery={messageSearchQuery}
               setMessageSearchQuery={setMessageSearchQuery} scrollToBottom={scrollToBottom}
               renderTextWithHighlights={renderTextWithHighlights} handleSendMessage={handleSendMessage}
-              inputValue={inputValue} handleInput={handleInput} replyingTo={replyingTo} setReplyingTo={setReplyingTo}
+              inputValue={inputValue} handleInput={handleInput} replyingTo={replyingTo} setReplyingTo={handleSetReplyingTo}
               showEmojiPicker={showEmojiPicker} setShowEmojiPicker={setShowEmojiPicker} onEmojiClick={onEmojiClick}
               formatTime={formatTime} formatLastSeen={formatLastSeen}
               showInfoPanel={showInfoPanel} setShowInfoPanel={setShowInfoPanel} 
@@ -846,14 +727,16 @@ export default function Chats() {
       </Modal>
 
       {incomingCall && (() => {
-        let callerName = incomingCall.from;
-        const directRoom = rooms.find(r => r.partner_id === incomingCall.from);
-        if (directRoom && directRoom.name) callerName = directRoom.name;
-        else {
-           for (const r of rooms) {
-               const m = r.members?.find(m => m.id === incomingCall.from);
-               if (m && m.name) { callerName = m.name; break; }
-           }
+        let callerName = 'Someone';
+        const fromId = incomingCall.from || incomingCall.callerId || incomingCall.userId;
+        
+        if (fromId && userMap[fromId]) {
+            callerName = userMap[fromId].name || userMap[fromId].username;
+        } else {
+            for (const r of rooms) {
+                const m = r.members?.find((m:any) => m.id === fromId || m.username === fromId);
+                if (m && m.name) { callerName = m.name; break; }
+            }
         }
         
         return (

@@ -19,19 +19,18 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchDashboardStats = async () => {
       try {
-        // Fetch /rooms once and calculate both stats from it. 
-        const res = await api.get('/rooms');
-        const roomsList = Array.isArray(res) ? res : res?.data || [];
+        // FIX: Fetch both rooms AND actual friends concurrently for accurate stats
+        const [roomsRes, friendsRes] = await Promise.all([
+            api.get('/rooms').catch(() => ({ data: [] })),
+            api.get('/friends').catch(() => ({ data: [] }))
+        ]);
 
-        // FIX: Broadened the filter so it doesn't accidentally hide friends 
-        // if the backend forgets to attach a specific 'type' to the room!
-        const dmCount = roomsList.filter((r: any) => 
-          !r.type || r.type.toUpperCase() === 'DM' || r.type.toUpperCase() === 'PRIVATE'
-        ).length;
+        const roomsList = Array.isArray(roomsRes) ? roomsRes : roomsRes?.data || [];
+        const friendsList = Array.isArray(friendsRes) ? friendsRes : friendsRes?.data || [];
 
         setStats({
-          friends: dmCount,
-          messages: roomsList.length 
+          friends: friendsList.length, // True friend count!
+          messages: roomsList.length   // True active chats count!
         });
       } catch (error) {
         console.error("Failed to load dashboard stats", error);

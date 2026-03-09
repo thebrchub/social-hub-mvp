@@ -1,11 +1,11 @@
-import { Search, Send, ArrowLeft, Smile, Check, CheckCheck, X, Loader2, MessageSquare, Reply, Clock, Phone, Video, Info, UserMinus, Ban, Flag, BellOff, MicOff, Mic, VideoOff } from 'lucide-react';
+import { Search, Send, ArrowLeft, Smile, Check, CheckCheck, X, Loader2, MessageSquare, Reply, Clock, Phone, Video, Info, UserMinus, Ban, Flag, MicOff, Mic, VideoOff, UserPlus } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useThemeStore } from '../../store/useThemeStore';
 import { useEffect, useRef, useState } from 'react'; 
 
 export const ChatWindow = ({ 
   activeRoom, selectedRoomId, setSelectedRoomId, messages, user, presence, typingData,
-  isRequest, handleRequestAction, 
+  isRequest, handleRequestAction, isFriend, 
   isMessagesLoading, isLoadingOlder, hasMoreMessages, fetchMessages, messagesEndRef,
   isSearchingMessages, setIsSearchingMessages, messageSearchQuery, setMessageSearchQuery, scrollToBottom, renderTextWithHighlights,
   handleSendMessage, inputValue, handleInput, replyingTo, setReplyingTo, showEmojiPicker, setShowEmojiPicker, onEmojiClick,
@@ -28,6 +28,10 @@ export const ChatWindow = ({
   const requestRef = useRef<number | null>(null);
 
   const [callDuration, setCallDuration] = useState(0);
+
+  const [swipingMsgId, setSwipingMsgId] = useState<string | null>(null);
+  const swipeStartX = useRef<number | null>(null);
+  const swipeCurrentX = useRef<number | null>(null);
 
   useEffect(() => {
       let interval: any;
@@ -97,6 +101,64 @@ export const ChatWindow = ({
     return () => clearTimeout(timer);
   }, [isCallActiveInThisRoom, activeCall?.isAccepted, activeCall?.isVideo]);
 
+  const scrollToRepliedMessage = (targetMsgId: string) => {
+      const targetElement = document.getElementById(`msg-${targetMsgId}`);
+      if (targetElement) {
+          targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          
+          targetElement.classList.add('bg-blue-500/20', 'transition-colors', 'duration-500', 'rounded-xl');
+          setTimeout(() => {
+              targetElement.classList.remove('bg-blue-500/20');
+          }, 1500);
+      }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, msgId: string) => {
+      swipeStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent, msgId: string) => {
+      if (swipeStartX.current === null) return;
+      const currentX = e.touches[0].clientX;
+      const diff = currentX - swipeStartX.current;
+
+      if (diff > 0 && diff < 100) { 
+          setSwipingMsgId(msgId);
+          swipeCurrentX.current = diff;
+          const element = document.getElementById(`msg-bubble-${msgId}`);
+          if (element) element.style.transform = `translateX(${diff}px)`;
+      }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent, msg: any, msgId: string) => {
+      if (swipeCurrentX.current && swipeCurrentX.current > 50) {
+          setReplyingTo(msg);
+      }
+      
+      const element = document.getElementById(`msg-bubble-${msgId}`);
+      if (element) {
+          element.style.transition = 'transform 0.2s ease-out';
+          element.style.transform = 'translateX(0px)';
+          setTimeout(() => { element.style.transition = ''; }, 200);
+      }
+      
+      swipeStartX.current = null;
+      swipeCurrentX.current = null;
+      setSwipingMsgId(null);
+  };
+
+  // Helper to extract clean text for the little box right above the input field
+  const getCleanReplyPreviewText = () => {
+     if (!replyingTo) return "";
+     const rawText = replyingTo.text || replyingTo.content || "";
+     if (rawText.startsWith('> ')) {
+         const parts = rawText.split('\n\n');
+         return parts.slice(1).join('\n\n') || "Reply";
+     }
+     return rawText;
+  };
+
+
   return (
     <div className={`flex-1 flex bg-white dark:bg-[#030303] relative min-w-0 transition-colors duration-300 ${!selectedRoomId ? 'hidden md:flex' : 'flex'}`}>
       
@@ -159,7 +221,7 @@ export const ChatWindow = ({
             </div>
           )}
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col scrollbar-hide z-0 bg-white dark:bg-[#030303] transition-colors relative">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col scrollbar-hide z-0 bg-white dark:bg-[#030303] transition-colors relative overflow-x-hidden">
              {hasMoreMessages && !isSearchingMessages && (
                <button onClick={() => fetchMessages(selectedRoomId, true)} disabled={isLoadingOlder} className="mx-auto mb-6 px-4 py-1.5 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 text-[10px] font-extrabold uppercase tracking-widest rounded-full flex items-center gap-2 transition-colors border border-gray-200 dark:border-transparent shadow-sm">
                  {isLoadingOlder ? <Loader2 size={14} className="animate-spin" strokeWidth={3} /> : <Clock size={14} strokeWidth={3} />} Load older
@@ -175,34 +237,70 @@ export const ChatWindow = ({
                      {messages.map((msg: any, idx: number) => {
                         const isMe = msg.sender_id === user?.id || msg.from === user?.id;
                         const isSystemMsg = msg.type === 'system' || msg.sender_id === 'system' || msg.from === 'system';
-                        const msgText = msg.text || msg.content || "";
+                        const rawText = msg.text || msg.content || "";
                         const msgId = msg.id || msg.message_id || msg._tempId || `temp-${idx}`;
 
                         if (isSystemMsg) {
                           return (
                             <div id={`msg-${msgId}`} key={msgId} className="flex justify-center my-3">
                                <span className="bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-widest shadow-sm text-center">
-                                  {msgText}
+                                  {rawText}
                                </span>
                             </div>
                           );
                         }
                         
-                        const isReply = msgText.startsWith('> ');
-                        const splitMsg = isReply ? msgText.split('\n\n') : [];
-                        const quoteText = isReply ? splitMsg[0].substring(2) : '';
-                        const actualText = isReply ? splitMsg.slice(1).join('\n\n') : msgText;
+                        // FIX: Strict Parsing to hide the `>` and `[id:...]` payload strings completely
+                        const isReply = rawText.startsWith('> ');
+                        let repliedMsgId = null;
+                        let cleanQuoteText = '';
+                        let actualText = rawText;
+
+                        if (isReply) {
+                            const parts = rawText.split('\n\n');
+                            const firstPart = parts[0];
+                            actualText = parts.slice(1).join('\n\n') || '';
+
+                            // Extract the ID and the quote text cleanly
+                            const idMatch = firstPart.match(/^>\s*\[id:(.+?)\]\s*(.*)$/);
+                            if (idMatch) {
+                                repliedMsgId = idMatch[1];
+                                cleanQuoteText = idMatch[2];
+                            } else {
+                                cleanQuoteText = firstPart.substring(2);
+                            }
+                        }
 
                         return (
-                          <div id={`msg-${msgId}`} key={msgId} onDoubleClick={() => setReplyingTo(msg)} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group cursor-pointer scroll-mt-24`}>
-                             <div className={`max-w-[85%] md:max-w-[70%] px-3.5 py-2 md:px-4 md:py-2.5 rounded-2xl text-[14px] md:text-[15px] font-medium leading-snug shadow-sm flex flex-col transition-colors ${
-                               isMe 
-                               ? 'bg-blue-600 text-white rounded-br-none shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)]' 
-                               : 'bg-gray-100 dark:bg-[#1a1a1a] text-gray-900 dark:text-gray-200 border border-gray-200 dark:border-[#272729] rounded-bl-none'
-                             }`}>
+                          <div 
+                              id={`msg-${msgId}`} 
+                              key={msgId} 
+                              className={`flex ${isMe ? 'justify-end' : 'justify-start'} group cursor-pointer relative -mx-4 px-4 py-0.5`}
+                              onDoubleClick={() => setReplyingTo(msg)}
+                              onTouchStart={(e) => handleTouchStart(e, msgId)}
+                              onTouchMove={(e) => handleTouchMove(e, msgId)}
+                              onTouchEnd={(e) => handleTouchEnd(e, msg, msgId)}
+                          >
+                             
+                             <div className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 dark:bg-[#1a1a1a] text-gray-500 transition-opacity duration-200 ${swipingMsgId === msgId && (swipeCurrentX.current || 0) > 40 ? 'opacity-100' : 'opacity-0'} ${isMe ? 'right-full mr-2' : 'left-full ml-2'}`}>
+                                 <Reply size={16} className="-scale-x-100"/>
+                             </div>
+
+                             <div 
+                                 id={`msg-bubble-${msgId}`}
+                                 className={`max-w-[85%] md:max-w-[70%] px-3.5 py-2 md:px-4 md:py-2.5 rounded-2xl text-[14px] md:text-[15px] font-medium leading-snug shadow-sm flex flex-col transition-colors relative z-10 ${
+                                   isMe 
+                                   ? 'bg-blue-600 text-white rounded-br-none shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)]' 
+                                   : 'bg-gray-100 dark:bg-[#1a1a1a] text-gray-900 dark:text-gray-200 border border-gray-200 dark:border-[#272729] rounded-bl-none'
+                                 }`}
+                             >
                                 {isReply && (
-                                  <div className={`border-l-2 pl-2 mb-2 text-xs opacity-90 ${isMe ? 'border-white/50 bg-black/10 text-white' : 'border-blue-500 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 shadow-inner'} p-2 rounded-lg`}>
-                                    {renderTextWithHighlights(quoteText)}
+                                  <div 
+                                      onClick={() => scrollToRepliedMessage(repliedMsgId || '')}
+                                      className={`border-l-4 mb-2 text-xs opacity-90 cursor-pointer hover:opacity-100 transition-opacity ${isMe ? 'border-blue-300 bg-black/10 text-white' : 'border-blue-500 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 shadow-inner'} p-2 rounded-lg`}
+                                  >
+                                    <p className="font-extrabold text-[10px] mb-0.5 opacity-80 uppercase tracking-wider">{isMe ? 'You replied' : 'Replied'}</p>
+                                    <p className="line-clamp-2">{renderTextWithHighlights(cleanQuoteText)}</p>
                                   </div>
                                 )}
                                 <span className="break-words whitespace-pre-wrap">{renderTextWithHighlights(actualText)}</span>
@@ -249,7 +347,7 @@ export const ChatWindow = ({
                             <Reply size={16} strokeWidth={2.5} className="text-gray-400 shrink-0" />
                             <div className="truncate">
                                <p className="text-[10px] text-blue-600 dark:text-blue-400 font-extrabold uppercase tracking-widest mb-0.5">{replyingTo.sender_id === user?.id ? 'Replying to yourself' : 'Replying to friend'}</p>
-                               <p className="text-gray-600 dark:text-gray-400 text-xs font-medium truncate max-w-[200px] md:max-w-md">{replyingTo.text || replyingTo.content}</p>
+                               <p className="text-gray-600 dark:text-gray-400 text-xs font-medium truncate max-w-[200px] md:max-w-md">{getCleanReplyPreviewText()}</p>
                             </div>
                          </div>
                          <button type="button" onClick={() => setReplyingTo(null)} className="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white rounded-full bg-white dark:bg-white/5 shadow-sm border border-gray-200 dark:border-transparent transition-colors"><X size={14} strokeWidth={2.5} /></button>
@@ -275,7 +373,6 @@ export const ChatWindow = ({
              )}
           </div>
 
-          {/* --- FIX 2: ABSOLUTE FULL PANE CALL OVERLAY (DOES NOT HIDE DASHBOARD RIGHT PANEL) --- */}
           {isCallActiveInThisRoom && (
             <div className="absolute inset-0 z-[100] bg-gray-50 dark:bg-[#030303] flex flex-col animate-in fade-in duration-300 overflow-hidden rounded-t-3xl md:rounded-none shadow-[0_-20px_50px_rgba(0,0,0,0.2)] md:shadow-none">
                 {activeCall.isVideo ? (
@@ -290,11 +387,7 @@ export const ChatWindow = ({
                    <div className="w-full h-full flex flex-col items-center justify-center relative pb-20">
                       <div className="relative mb-8 flex items-center justify-center">
                          {activeCall.isAccepted && (
-                             <div 
-                                ref={avatarRingRef} 
-                                className="absolute inset-0 rounded-full bg-green-500/20 transition-transform origin-center"
-                                style={{ zIndex: 0 }}
-                             />
+                             <div ref={avatarRingRef} className="absolute inset-0 rounded-full bg-green-500/20 transition-transform origin-center" style={{ zIndex: 0 }} />
                          )}
                          <div className={`w-32 h-32 md:w-48 md:h-48 rounded-full flex items-center justify-center overflow-hidden transition-all duration-500 border-4 shadow-2xl relative z-10 ${activeCall.isAccepted ? 'bg-green-100 dark:bg-green-900/20 border-green-500/50' : 'bg-blue-100 dark:bg-blue-900/20 border-blue-500/30 shadow-[0_0_60px_rgba(59,130,246,0.3)] animate-pulse'}`}>
                             {roomAvatar ? (
@@ -349,15 +442,13 @@ export const ChatWindow = ({
         </div>
       )}
 
-      {/* --- RIGHT SIDEBAR: DM INFO PANEL --- */}
-      <div 
-        className={`absolute top-0 right-0 bottom-0 w-full sm:w-[320px] border-l border-gray-200 dark:border-[#272729] bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col z-50 shadow-[-20px_0_50px_rgba(0,0,0,0.1)] dark:shadow-[-20px_0_50px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${showInfoPanel && selectedRoomId ? 'translate-x-0' : 'translate-x-full'}`}
-      >
-         <div className="h-16 border-b border-gray-200 dark:border-[#272729] flex items-center px-4 bg-gray-50/90 dark:bg-[#1a1a1a]/90 backdrop-blur-md shrink-0 transition-colors">
-            <button onClick={() => setShowInfoPanel(false)} className="p-2 -ml-1 mr-3 bg-white dark:bg-[#272729] border border-gray-200 dark:border-transparent rounded-lg text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white shrink-0 transition-all shadow-sm active:scale-95">
+      <div className={`absolute top-0 right-0 bottom-0 w-full sm:w-[320px] border-l border-gray-200 dark:border-[#272729] bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col z-50 shadow-[-20px_0_50px_rgba(0,0,0,0.1)] dark:shadow-[-20px_0_50px_rgba(0,0,0,0.5)] transition-transform duration-300 ease-out ${showInfoPanel && selectedRoomId ? 'translate-x-0' : 'translate-x-full'}`}>
+         
+         <div className="h-16 border-b border-gray-200 dark:border-[#272729] flex items-center justify-between px-4 bg-gray-50/90 dark:bg-[#1a1a1a]/90 backdrop-blur-md shrink-0 transition-colors">
+            <h2 className="font-extrabold text-gray-900 dark:text-white text-base">Contact Info</h2>
+            <button onClick={() => setShowInfoPanel(false)} className="p-2 bg-white dark:bg-[#272729] border border-gray-200 dark:border-transparent rounded-lg text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white shrink-0 transition-all shadow-sm active:scale-95">
                <X size={18} strokeWidth={2.5} />
             </button>
-            <h2 className="font-extrabold text-gray-900 dark:text-white text-base">Contact Info</h2>
          </div>
 
          <div className="flex-1 overflow-y-auto scrollbar-hide">
@@ -385,17 +476,24 @@ export const ChatWindow = ({
              </div>
 
              <div className="p-4 space-y-2">
-                <h4 className="text-[10px] font-extrabold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-2">Actions</h4>
-                <button onClick={() => onPanelAction('mute_notifications')} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 dark:bg-transparent dark:hover:bg-white/5 text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white border border-gray-200 dark:border-transparent rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
-                   <BellOff size={18} strokeWidth={2.5}/> Mute Notifications
-                </button>
-                
-                <div className="h-px bg-gray-200 dark:bg-[#272729] my-3"></div>
+                {!isFriend && (
+                   <>
+                      <h4 className="text-[10px] font-extrabold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-2">Actions</h4>
+                      <button onClick={() => onPanelAction('add_friend')} className="w-full flex items-center gap-3 p-3 bg-green-50 hover:bg-green-100 dark:bg-green-500/10 dark:hover:bg-green-500/20 border border-green-100 dark:border-transparent text-green-600 dark:text-green-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
+                         <UserPlus size={18} strokeWidth={2.5}/> Add as Friend
+                      </button>
+                      <div className="h-px bg-gray-200 dark:bg-[#272729] my-3"></div>
+                   </>
+                )}
                 
                 <h4 className="text-[10px] font-extrabold text-red-400 dark:text-red-500/50 uppercase tracking-widest px-2 mb-2">Danger Zone</h4>
-                <button onClick={() => onPanelAction('remove')} className="w-full flex items-center gap-3 p-3 bg-orange-50 hover:bg-orange-100 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 border border-orange-100 dark:border-transparent text-orange-600 dark:text-orange-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
-                   <UserMinus size={18} strokeWidth={2.5}/> Remove Friend
-                </button>
+                
+                {isFriend && (
+                   <button onClick={() => onPanelAction('remove')} className="w-full flex items-center gap-3 p-3 bg-orange-50 hover:bg-orange-100 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 border border-orange-100 dark:border-transparent text-orange-600 dark:text-orange-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
+                      <UserMinus size={18} strokeWidth={2.5}/> Remove Friend
+                   </button>
+                )}
+
                 <button onClick={() => onPanelAction('block')} className="w-full flex items-center gap-3 p-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/10 dark:hover:bg-red-500/20 border border-red-100 dark:border-transparent text-red-600 dark:text-red-500 rounded-xl transition-all font-bold text-sm shadow-sm hover:shadow-md">
                    <Ban size={18} strokeWidth={2.5}/> Block User
                 </button>
