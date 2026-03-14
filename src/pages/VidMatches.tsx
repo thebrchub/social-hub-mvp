@@ -16,7 +16,6 @@ const VidMatches = () => {
   const { theme } = useThemeStore();
   const { subscribe, sendMessage, sendRaw } = useWebSocket();
 
-  // --- UI Layout States ---
   const [layoutMode, setLayoutMode] = useState<'stacked' | 'split'>(() => {
     if (typeof window !== 'undefined') return (localStorage.getItem('vidMatches_layoutMode') as 'stacked' | 'split') || 'split';
     return 'split';
@@ -38,7 +37,6 @@ const VidMatches = () => {
   useEffect(() => localStorage.setItem('vidMatches_layoutMode', layoutMode), [layoutMode]);
   useEffect(() => localStorage.setItem('vidMatches_showChat', String(showChat)), [showChat]);
 
-  // --- Match & WebRTC States ---
   const [matchState, setMatchState] = useState<MatchState>('welcome');
   const [slideState, setSlideState] = useState<'idle' | 'sliding-out' | 'sliding-in'>('idle');
   
@@ -66,7 +64,6 @@ const VidMatches = () => {
   const wsRef = useRef<any>(null); 
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
 
-  // Auto-scroll chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
@@ -106,8 +103,9 @@ const VidMatches = () => {
     setPeerSync(null);
   };
 
-  // FIX: Issue #5 - Auto Re-Search when Stranger Disconnects!
+  // FIX #5: Bulletproof reconnect loop. If the stranger drops, we immediately search again.
   const handlePeerDisconnected = async () => {
+    if (matchState !== 'matched') return;
     setChatMessages(prev => [...prev, { sender: 'system', text: 'Stranger left. Finding a new match...' }]);
     cleanupMatch();
     setSlideState('sliding-out');
@@ -128,17 +126,12 @@ const VidMatches = () => {
   const getIceConfig = async () => {
     try {
       const res = await api.get('/calls/config');
-      // FIX: Issue #1 - Added multiple Google STUN fallbacks for better internet NAT traversal
       return res.iceServers || [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ];
-    } catch (e) {
-      return [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
       ];
+    } catch (e) {
+      return [{ urls: 'stun:stun.l.google.com:19302' }];
     }
   };
 
@@ -155,7 +148,7 @@ const VidMatches = () => {
     }
 
     try {
-      // FIX: Issue #2 - Added HD (720p) "ideal" constraints to get crisp video without crashing bad cameras
+      // FIX #2: "ideal" keyword ensures HD (720p) if possible, but falls back to SD instead of crashing
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, 
         audio: { echoCancellation: true, noiseSuppression: true } 
@@ -167,17 +160,15 @@ const VidMatches = () => {
 
     } catch (err: any) {
       console.error("Camera/Mic access failed:", err);
-      
       if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setMediaError({ title: "Hardware Missing", desc: "No camera or microphone was detected by your browser.", action: "Check if your webcam is plugged in. If on a laptop, ensure the physical camera switch on the side or keyboard is turned ON." });
       } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the 'Lock' icon in your browser's URL bar, change Camera/Mic to 'Allow', and refresh the page." });
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        setMediaError({ title: "Hardware Blocked or In Use", desc: "Your camera is either being used by another app, or it is disabled by a hardware privacy switch.", action: "1. Close Zoom/Meet. 2. Look at your keyboard for a camera icon (like F8 or F10) and press it to enable the camera. 3. Check for a physical sliding shutter over your lens." });
+        setMediaError({ title: "Hardware Blocked or In Use", desc: "Your camera is either being used by another app, or it is disabled by a hardware privacy switch.", action: "1. Close Zoom/Meet. 2. Look at your keyboard for a camera icon (like F8 or F10) and press it to enable the camera." });
       } else {
         setMediaError({ title: "Camera Error", desc: "An unexpected error occurred.", action: err.message });
       }
-      
       setMatchState('welcome'); 
       return null;
     }
@@ -190,12 +181,19 @@ const VidMatches = () => {
     iceCandidateQueue.current = [];
 
     pc.onicecandidate = (event) => {
+      // FIX #1: Added roomId and room_id to ensure the backend routes the ICE candidate!
       if (event.candidate && wsRef.current) {
-        wsRef.current({ type: 'ice_candidate', to: targetUserId, callId: roomId, candidate: JSON.stringify(event.candidate) });
+        wsRef.current({ 
+            type: 'ice_candidate', 
+            roomId: roomId, 
+            room_id: roomId, 
+            to: targetUserId, 
+            callId: roomId, 
+            candidate: JSON.stringify(event.candidate) 
+        });
       }
     };
 
-    // FIX: Issue #1 - Safer multi-browser remote stream handling
     pc.ontrack = (event) => {
       if (remoteVideoRef.current) {
         if (event.streams && event.streams[0]) {
@@ -331,33 +329,62 @@ const VidMatches = () => {
         setChatMessages([{ sender: 'system', text: 'You are now video chatting with a stranger!' }]);
         setTimeout(() => setSlideState('idle'), 500);
 
-        if (parsed.peerId) setPeerSync(parsed.peerId);
+        // FIX #1: Securely extract partner ID
+        const partnerId = parsed.peerId || parsed.partnerId || parsed.partner_id || parsed.partner_username || 'stranger';
+        if (partnerId !== 'stranger') setPeerSync(partnerId);
 
-        if (user?.id && parsed.peerId && String(user.id).localeCompare(String(parsed.peerId)) < 0) {
-            const pc = await createPeerConnection(parsed.peerId, roomId);
+        // FIX #1: Securely determine the initiator of the WebRTC connection
+        const isInitiator = parsed.initiator || parsed.isInitiator || 
+                           (user?.id && partnerId !== 'stranger' && String(user.id).localeCompare(String(partnerId)) < 0);
+
+        if (isInitiator) {
+            const pc = await createPeerConnection(partnerId, roomId);
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            wsRef.current({ type: 'call_offer', to: parsed.peerId, callId: roomId, sdp: JSON.stringify(offer) });
+            
+            // FIX #1: Added roomId to ensure the backend routes the offer to the room!
+            wsRef.current({ 
+                type: 'call_offer', 
+                roomId: roomId, 
+                room_id: roomId, 
+                to: partnerId, 
+                callId: roomId, 
+                sdp: JSON.stringify(offer) 
+            });
         }
       }
 
-      if (parsed.type === 'stranger_disconnected' || parsed.type === 'room_closed') {
-        if (parsed.roomId === currentRoomId) handlePeerDisconnected();
+      // FIX #5: Aggressively listen for the backend telling us the stranger left
+      if (parsed.type === 'stranger_disconnected' || parsed.type === 'room_closed' || parsed.type === 'peer_left') {
+        if (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) {
+            handlePeerDisconnected();
+        }
       }
 
-      if (parsed.type === 'call_offer' && parsed.callId === currentRoomId) {
-        setPeerSync(parsed.from);
-        const pc = await createPeerConnection(parsed.from, parsed.callId);
+      if ((parsed.type === 'call_offer' || parsed.type === 'webrtc_offer') && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
+        const senderId = parsed.from || parsed.senderId || parsed.peerId;
+        if (senderId) setPeerSync(senderId);
+        
+        const pc = await createPeerConnection(senderId || 'stranger', currentRoomId!);
         await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        wsRef.current({ type: 'call_answer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(answer) });
+        
+        // FIX #1: Added roomId to answer payload
+        wsRef.current({ 
+            type: 'call_answer', 
+            roomId: currentRoomId, 
+            room_id: currentRoomId, 
+            to: senderId, 
+            callId: currentRoomId, 
+            sdp: JSON.stringify(answer) 
+        });
         
         iceCandidateQueue.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)));
         iceCandidateQueue.current = [];
       }
 
-      if (parsed.type === 'call_answer' && parsed.callId === currentRoomId) {
+      if (parsed.type === 'call_answer' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
         if (pcRef.current) {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
           iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c)));
@@ -365,7 +392,7 @@ const VidMatches = () => {
         }
       }
 
-      if (parsed.type === 'ice_candidate' && parsed.callId === currentRoomId) {
+      if (parsed.type === 'ice_candidate' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
         const candidate = JSON.parse(parsed.candidate);
         if (pcRef.current && pcRef.current.remoteDescription) {
           pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
@@ -374,7 +401,7 @@ const VidMatches = () => {
         }
       }
 
-      if (parsed.type === 'send_message' && parsed.roomId === currentRoomId && parsed.from !== user?.id) {
+      if (parsed.type === 'send_message' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) && parsed.from !== user?.id) {
         setChatMessages(prev => [...prev, { sender: 'stranger', text: parsed.text || parsed.content }]);
       }
     });
@@ -411,95 +438,66 @@ const VidMatches = () => {
 
   return (
     <DashboardLayout>
-      {/* This style block forces the right-hand friends sidebar inside DashboardLayout 
-        to disappear completely whenever VidMatches is mounted!
-      // */}
-      // <style>{`
-      //   aside.w-\\[350px\\] { display: none !important; }
-      // `}</style>
+      {/* <style>{`
+        aside.w-\\[350px\\] { display: none !important; }
+      `}</style> */}
 
-      {/* FIX: Issue #4 - Added adaptive background colors (bg-gray-100 dark:bg-[#050505]) for Light Theme support */}
+      {/* FIX #4: UI properly respects light theme using bg-gray-100 */}
       <div ref={containerRef} onMouseMove={resetIdleTimer} onTouchStart={resetIdleTimer} className="absolute inset-0 z-50 flex flex-col md:flex-row bg-gray-100 dark:bg-[#050505] overflow-hidden transition-colors">
         
         {/* CUSTOM MODALS OVERLAY */}
         {modalType !== 'NONE' && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-3xl p-6 md:p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200 transition-colors">
-              
-              {/* BLOCK MODAL */}
+              {/* MODALS RENDER HERE */}
               {modalType === 'BLOCK' && (
                 <div className="text-center">
                   <div className="w-16 h-16 rounded-full bg-red-50 dark:bg-[#451212] text-red-600 dark:text-red-500 flex items-center justify-center mx-auto mb-5 shadow-inner border border-red-100 dark:border-[#5c1c1c]">
                     <Ban size={32} strokeWidth={2.5} />
                   </div>
                   <h3 className="text-xl font-display font-extrabold text-gray-900 dark:text-white mb-2">Block User?</h3>
-                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-6">You will no longer be matched with this person, and they won't be able to message you.</p>
+                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-6">You will no longer be matched with this person.</p>
                   <div className="flex flex-col gap-3">
-                    <button onClick={() => executeMatchAction('block')} disabled={isProcessingAction} className="w-full py-3.5 rounded-2xl bg-red-600 text-white hover:bg-red-500 transition-all font-extrabold flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.3),_0_4px_10px_rgba(220,38,38,0.2)]">
-                      {isProcessingAction ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Yes, Block'}
+                    <button onClick={() => executeMatchAction('block')} disabled={isProcessingAction} className="w-full py-3.5 rounded-2xl bg-red-600 text-white hover:bg-red-500 transition-all font-extrabold shadow-sm">
+                      {isProcessingAction ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Yes, Block'}
                     </button>
-                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#343536] transition-colors font-extrabold">Cancel</button>
+                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 font-extrabold hover:bg-gray-200 dark:hover:bg-[#343536]">Cancel</button>
                   </div>
                 </div>
               )}
 
-              {/* REPORT MODAL */}
               {modalType === 'REPORT' && (
                 <div>
-                  <div className="flex items-center gap-3 mb-5">
-                    <div className="w-12 h-12 rounded-full bg-orange-50 dark:bg-[#4a2411] text-orange-500 flex items-center justify-center border border-orange-100 dark:border-[#733312]">
-                      <Flag size={24} strokeWidth={2.5} />
-                    </div>
-                    <h3 className="text-xl font-display font-extrabold text-gray-900 dark:text-white">Report User</h3>
-                  </div>
-                  <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-4">Please let us know why you are reporting this user. They will be automatically blocked.</p>
-                  <textarea 
-                    value={reportReason}
-                    onChange={(e) => setReportReason(e.target.value)}
-                    placeholder="Enter reason..."
-                    className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] rounded-2xl p-4 text-gray-900 dark:text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-orange-500/20 min-h-[120px] mb-6 resize-none shadow-inner"
-                    autoFocus
-                  />
+                  <h3 className="text-xl font-display font-extrabold text-gray-900 dark:text-white mb-4">Report User</h3>
+                  <textarea value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder="Enter reason..." className="w-full bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] rounded-2xl p-4 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 min-h-[120px] mb-6 shadow-inner" autoFocus />
                   <div className="flex flex-col gap-3">
-                    <button onClick={executeReport} disabled={isProcessingAction || !reportReason.trim()} className="w-full py-3.5 rounded-2xl bg-orange-500 text-white hover:bg-orange-400 disabled:opacity-50 transition-all font-extrabold flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.3),_0_4px_10px_rgba(249,115,22,0.2)]">
-                      {isProcessingAction ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Submit Report'}
+                    <button onClick={executeReport} disabled={isProcessingAction || !reportReason.trim()} className="w-full py-3.5 rounded-2xl bg-orange-500 text-white font-extrabold shadow-sm disabled:opacity-50 hover:bg-orange-400">
+                      {isProcessingAction ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Submit Report'}
                     </button>
-                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#343536] transition-colors font-extrabold">Cancel</button>
+                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 font-extrabold hover:bg-gray-200 dark:hover:bg-[#343536]">Cancel</button>
                   </div>
                 </div>
               )}
 
-              {/* FRIEND SUCCESS MODAL */}
               {modalType === 'FRIEND_SUCCESS' && (
                 <div className="text-center">
-                  <div className="w-16 h-16 rounded-full bg-green-50 dark:bg-[#14532D] text-green-500 flex items-center justify-center mx-auto mb-5 border border-green-100 dark:border-[#166534] shadow-inner">
+                  <div className="w-16 h-16 rounded-full bg-green-50 dark:bg-[#14532D] text-green-500 flex items-center justify-center mx-auto mb-5 border border-green-100 dark:border-[#166534]">
                     <CheckCircle2 size={32} strokeWidth={2.5} />
                   </div>
                   <h3 className="text-xl font-display font-extrabold text-gray-900 dark:text-white mb-2">Request Sent!</h3>
-                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-6">A friend request has been sent! You can keep chatting.</p>
-                  <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-blue-600 dark:bg-[#1E3A8A] text-white hover:bg-blue-500 transition-all font-extrabold shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)]">
-                    Continue Chatting
-                  </button>
+                  <button onClick={() => setModalType('NONE')} className="w-full py-3.5 mt-4 rounded-2xl bg-blue-600 text-white font-extrabold shadow-sm hover:bg-blue-500">Continue Chatting</button>
                 </div>
               )}
 
-              {/* CANCEL/LEAVE WARNING MODAL */}
               {modalType === 'LEAVE_WARNING' && (
                 <div className="text-center">
-                  <div className="w-16 h-16 rounded-full bg-yellow-50 dark:bg-[#4a3f11] text-yellow-600 dark:text-yellow-500 flex items-center justify-center mx-auto mb-5 border border-yellow-100 dark:border-[#736112]">
-                    <AlertTriangle size={32} strokeWidth={2.5} />
-                  </div>
                   <h3 className="text-xl font-display font-extrabold text-gray-900 dark:text-white mb-2">Leave Search?</h3>
-                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-6">Are you sure you want to stop searching for a match?</p>
-                  <div className="flex flex-col gap-3">
-                    <button onClick={executeCancelSearch} className="w-full py-3.5 rounded-2xl bg-red-600 text-white hover:bg-red-500 transition-all font-extrabold flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.3),_0_4px_10px_rgba(220,38,38,0.2)]">
-                      Yes, Leave
-                    </button>
-                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#343536] transition-colors font-extrabold">Keep Searching</button>
+                  <div className="flex flex-col gap-3 mt-6">
+                    <button onClick={executeCancelSearch} className="w-full py-3.5 rounded-2xl bg-red-600 text-white font-extrabold shadow-sm hover:bg-red-500">Yes, Leave</button>
+                    <button onClick={() => setModalType('NONE')} className="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-[#272729] text-gray-700 dark:text-gray-300 font-extrabold hover:bg-gray-200 dark:hover:bg-[#343536]">Keep Searching</button>
                   </div>
                 </div>
               )}
-
             </div>
           </div>
         )}
@@ -517,19 +515,19 @@ const VidMatches = () => {
               </div>
 
              <div className="flex items-center gap-2">
-                <button onClick={() => setLayoutMode(prev => prev === 'stacked' ? 'split' : 'stacked')} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hidden md:block hover:-translate-y-0.5" title="Switch Layout">
+                <button onClick={() => setLayoutMode(prev => prev === 'stacked' ? 'split' : 'stacked')} className="bg-white/80 hover:bg-white dark:bg-black/40 dark:hover:bg-black/60 backdrop-blur-md border border-gray-300 dark:border-white/10 text-gray-700 dark:text-white p-3 rounded-xl transition-all shadow-sm hidden md:block hover:-translate-y-0.5" title="Switch Layout">
                   {layoutMode === 'stacked' ? <Columns size={18} strokeWidth={2.5} /> : <Rows size={18} strokeWidth={2.5} />}
                 </button>
-                {/* FIX: Issue #3 - Removed 'hidden md:block' to allow mobile users to open the chat pane */}
-                <button onClick={() => setShowChat(!showChat)} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hover:-translate-y-0.5" title="Toggle Chat">
+                {/* FIX #3: Removed 'hidden md:block' so mobile users can click the chat toggle button! */}
+                <button onClick={() => setShowChat(!showChat)} className="bg-white/80 hover:bg-white dark:bg-black/40 dark:hover:bg-black/60 backdrop-blur-md border border-gray-300 dark:border-white/10 text-gray-700 dark:text-white p-3 rounded-xl transition-all shadow-sm hover:-translate-y-0.5" title="Toggle Chat">
                   {showChat ? <MessageSquareOff size={18} strokeWidth={2.5} /> : <MessageSquare size={18} strokeWidth={2.5} />}
                 </button>
-                <button onClick={toggleFullscreen} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hidden md:block hover:-translate-y-0.5" title="Toggle Fullscreen">
+                <button onClick={toggleFullscreen} className="bg-white/80 hover:bg-white dark:bg-black/40 dark:hover:bg-black/60 backdrop-blur-md border border-gray-300 dark:border-white/10 text-gray-700 dark:text-white p-3 rounded-xl transition-all shadow-sm hidden md:block hover:-translate-y-0.5" title="Toggle Fullscreen">
                   {isFullscreen ? <Minimize size={18} strokeWidth={2.5} /> : <Maximize size={18} strokeWidth={2.5} />}
                 </button>
 
                 {matchState !== 'welcome' && (
-                    <button onClick={handleExit} className="bg-red-500/20 hover:bg-red-600/80 border border-red-500/50 text-red-500 hover:text-white p-3 rounded-xl backdrop-blur-md transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)] ml-2 hover:-translate-y-0.5" title="Exit Matchmaking">
+                    <button onClick={handleExit} className="bg-red-50 hover:bg-red-100 border border-red-200 dark:bg-red-500/20 dark:hover:bg-red-600/80 dark:border-red-500/50 text-red-600 dark:text-red-500 dark:hover:text-white p-3 rounded-xl backdrop-blur-md transition-all shadow-sm ml-2 hover:-translate-y-0.5" title="Exit Matchmaking">
                        <Power size={18} strokeWidth={3} />
                     </button>
                 )}
@@ -539,28 +537,24 @@ const VidMatches = () => {
           {/* --- VIDEO SPLIT SCREEN --- */}
           <div className={`flex-1 flex p-2 md:p-4 pt-16 md:pt-20 gap-2 md:gap-4 overflow-hidden relative ${matchState === 'welcome' ? '' : 'pb-24 md:pb-28'} ${layoutMode === 'split' ? 'md:flex-row flex-col' : 'flex-col items-center justify-center'}`}>
              
-             {/* IDLE / WELCOME SCREEN - KINETIC ANIMATION */}
+             {/* IDLE / WELCOME SCREEN */}
              {matchState === 'welcome' && (
                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#0a0a0a] z-30 animate-in fade-in zoom-in transition-colors">
                      
                      <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none opacity-60 dark:opacity-100">
-                        <div className="absolute w-[300px] h-[300px] bg-purple-400/20 dark:bg-purple-600/10 blur-3xl rounded-full animate-pulse"></div>
+                        <div className="absolute w-[300px] h-[300px] bg-purple-200 dark:bg-purple-600/10 blur-3xl rounded-full animate-pulse"></div>
                         <div className="absolute w-[220px] h-[220px] md:w-[280px] md:h-[280px] border border-dashed border-gray-300 dark:border-purple-900/30 rounded-full animate-spin [animation-duration:15s] flex items-center justify-center">
                             <div className="w-3 h-3 bg-purple-500/50 rounded-full absolute -top-1.5"></div>
-                        </div>
-                        <div className="absolute w-[300px] h-[300px] md:w-[380px] md:h-[380px] border border-dotted border-gray-300 dark:border-purple-900/10 rounded-full animate-spin [animation-duration:25s] animation-direction-reverse flex items-center justify-center">
-                            <div className="w-2 h-2 bg-gray-400 dark:bg-purple-700/50 rounded-full absolute top-10"></div>
                         </div>
                      </div>
 
                      <div className="relative group z-10">
-                        <div className="absolute inset-0 bg-purple-300/30 dark:bg-purple-600/20 blur-2xl rounded-[3rem] md:rounded-[4rem] scale-125 animate-pulse transition-transform duration-700"></div>
+                        <div className="absolute inset-0 bg-purple-300/50 dark:bg-purple-600/20 blur-2xl rounded-[3rem] md:rounded-[4rem] scale-125 animate-pulse transition-transform duration-700"></div>
                         <button 
                           onClick={handleStart}
-                          className="relative w-36 h-36 md:w-48 md:h-48 bg-purple-600 dark:bg-[#4C1D95] border border-purple-500 dark:border-[#5B21B6] rounded-[3rem] md:rounded-[4rem] flex items-center justify-center hover:-translate-y-2 transition-all cursor-pointer shadow-[inset_0_4px_12px_rgba(255,255,255,0.4),_0_15px_30px_rgba(168,85,247,0.3)] dark:shadow-[inset_0_2px_8px_rgba(255,255,255,0.1),_0_20px_40px_rgba(0,0,0,0.5)] overflow-hidden group-hover:shadow-[inset_0_4px_12px_rgba(255,255,255,0.6),_0_20px_40px_rgba(168,85,247,0.5)] dark:group-hover:shadow-[inset_0_2px_8px_rgba(255,255,255,0.2),_0_30px_60px_rgba(0,0,0,0.7)]"
+                          className="relative w-36 h-36 md:w-48 md:h-48 bg-purple-600 dark:bg-[#4C1D95] border border-purple-500 dark:border-[#5B21B6] rounded-[3rem] md:rounded-[4rem] flex items-center justify-center hover:-translate-y-2 transition-all cursor-pointer shadow-xl overflow-hidden group-hover:shadow-2xl"
                         >
                            <Video className="w-14 h-14 md:w-20 md:h-20 text-white drop-shadow-md group-hover:scale-110 transition-transform" strokeWidth={2.5} />
-                           <div className="absolute inset-0 rounded-[3rem] md:rounded-[4rem] border-4 border-white/10 shadow-inner pointer-events-none"></div>
                         </button>
                      </div>
                      
@@ -574,7 +568,7 @@ const VidMatches = () => {
              {/* STRANGER VIDEO */}
              <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
                 
-                <div className={`absolute bottom-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 text-white text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState === 'matched' ? 'opacity-100' : 'opacity-0'}`}>
+                <div className={`absolute bottom-4 left-4 bg-white/80 dark:bg-black/60 text-gray-900 dark:text-white backdrop-blur-md border border-gray-300 dark:border-white/10 text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState === 'matched' ? 'opacity-100' : 'opacity-0'}`}>
                    STRANGER
                 </div>
 
@@ -582,8 +576,8 @@ const VidMatches = () => {
                    <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in fade-in zoom-in duration-500 bg-gray-100 dark:bg-[#0a0a0a]">
                       <div className="relative w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
                          <span className="absolute inset-0 border-4 border-purple-500/30 rounded-full animate-ping"></span>
-                         <div className="w-20 h-20 md:w-24 md:h-24 bg-white dark:bg-[#1A1A1B] border border-purple-500/50 rounded-full flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_10px_20px_rgba(168,85,247,0.2)] z-10">
-                            <Loader2 className="w-8 h-8 md:w-10 md:h-10 text-purple-500 animate-spin" strokeWidth={2.5} />
+                         <div className="w-20 h-20 md:w-24 md:h-24 bg-white dark:bg-[#1A1A1B] border border-purple-200 dark:border-purple-500/50 rounded-full flex items-center justify-center shadow-lg z-10">
+                            <Loader2 className="w-8 h-8 md:w-10 md:h-10 text-purple-600 dark:text-purple-500 animate-spin" strokeWidth={2.5} />
                          </div>
                       </div>
                       <p className="text-gray-500 dark:text-gray-400 font-bold mt-8 animate-pulse text-sm md:text-base tracking-widest uppercase">Finding someone...</p>
@@ -597,7 +591,7 @@ const VidMatches = () => {
                 {matchState === 'matched' && slideState === 'idle' && (
                    <button 
                      onClick={() => executeMatchAction('friend')} 
-                     className={`absolute top-4 right-4 bg-green-500/80 hover:bg-green-500 backdrop-blur-md p-3 rounded-xl shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_4px_10px_rgba(0,0,0,0.3)] border border-green-400/50 transition-all active:scale-90 z-30 group duration-500 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'}`} 
+                     className={`absolute top-4 right-4 bg-green-500/90 hover:bg-green-600 backdrop-blur-md p-3 rounded-xl shadow-lg border border-green-400 transition-all active:scale-90 z-30 group duration-500 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'}`} 
                      title="Add as Friend"
                    >
                       <UserPlus size={20} strokeWidth={2.5} className="text-white drop-shadow-sm" />
@@ -607,7 +601,7 @@ const VidMatches = () => {
 
              {/* MY VIDEO */}
              <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
-                <div className={`absolute bottom-4 left-4 bg-blue-600/80 backdrop-blur-md border border-white/20 text-white text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState !== 'welcome' ? 'opacity-100' : 'opacity-0'}`}>
+                <div className={`absolute bottom-4 left-4 bg-blue-100 dark:bg-blue-600/80 text-blue-800 dark:text-white backdrop-blur-md border border-blue-300 dark:border-white/20 text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState !== 'welcome' ? 'opacity-100' : 'opacity-0'}`}>
                    YOU
                 </div>
 
@@ -623,28 +617,28 @@ const VidMatches = () => {
                 )}
                 
                 {isMuted && (
-                  <div className="absolute top-4 right-4 bg-red-500/90 backdrop-blur-sm p-2 rounded-xl shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] border border-red-400/50">
-                    <MicOff size={16} strokeWidth={2.5} className="text-white drop-shadow-sm" />
+                  <div className="absolute top-4 right-4 bg-red-100 dark:bg-red-500/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-red-300 dark:border-red-400/50">
+                    <MicOff size={16} strokeWidth={2.5} className="text-red-600 dark:text-white drop-shadow-sm" />
                   </div>
                 )}
              </div>
           </div>
 
-          {/* --- FLOATING ACTION BAR (3D Bulge) --- */}
+          {/* --- FLOATING ACTION BAR --- */}
           {matchState !== 'welcome' && (
               <div 
-                 className={`absolute left-1/2 -translate-x-1/2 flex items-center gap-3 md:gap-5 z-40 bg-black/60 backdrop-blur-xl px-4 py-3 md:px-6 md:py-3.5 rounded-[2rem] border border-white/10 shadow-[inset_0_2px_4px_rgba(255,255,255,0.05),_0_20px_40px_rgba(0,0,0,0.8)] transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] 
+                 className={`absolute left-1/2 -translate-x-1/2 flex items-center gap-3 md:gap-5 z-40 bg-white/90 dark:bg-black/60 backdrop-blur-xl px-4 py-3 md:px-6 md:py-3.5 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-[0_20px_40px_rgba(0,0,0,0.8)] transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] 
                  ${showControls ? 'bottom-6 md:bottom-8 opacity-100 translate-y-0 scale-100' : 'bottom-0 opacity-0 translate-y-20 scale-95 pointer-events-none'}`}
               >
-                 <button onClick={() => setModalType('REPORT')} className="p-3 rounded-xl bg-orange-500/10 hover:bg-orange-500/30 text-orange-500 transition-colors shadow-sm" title="Report">
+                 <button onClick={() => setModalType('REPORT')} className="p-3 rounded-xl bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/30 text-orange-500 transition-colors shadow-sm" title="Report">
                     <Flag size={22} strokeWidth={2.5} />
                  </button>
 
-                 <div className="flex gap-2 border-x border-white/10 px-3 md:px-5">
-                    <button onClick={toggleMic} className={`p-3 rounded-xl transition-all shadow-sm ${isMuted ? 'bg-white/20 text-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]' : 'bg-white/5 hover:bg-white/10 text-gray-300'}`} title="Toggle Mic">
+                 <div className="flex gap-2 border-x border-gray-200 dark:border-white/10 px-3 md:px-5">
+                    <button onClick={toggleMic} className={`p-3 rounded-xl transition-all shadow-sm ${isMuted ? 'bg-red-100 dark:bg-white/20 text-red-600 dark:text-white' : 'bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300'}`} title="Toggle Mic">
                        {isMuted ? <MicOff size={22} strokeWidth={2.5} /> : <Mic size={22} strokeWidth={2.5} />}
                     </button>
-                    <button onClick={toggleCam} className={`p-3 rounded-xl transition-all shadow-sm ${isCamOff ? 'bg-white/20 text-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]' : 'bg-white/5 hover:bg-white/10 text-gray-300'}`} title="Toggle Camera">
+                    <button onClick={toggleCam} className={`p-3 rounded-xl transition-all shadow-sm ${isCamOff ? 'bg-gray-200 dark:bg-white/20 text-gray-800 dark:text-white' : 'bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300'}`} title="Toggle Camera">
                        {isCamOff ? <VideoOff size={22} strokeWidth={2.5} /> : <Video size={22} strokeWidth={2.5} />}
                     </button>
                  </div>
@@ -652,7 +646,7 @@ const VidMatches = () => {
                  <button 
                    onClick={handleSkip} 
                    disabled={matchState === 'searching'}
-                   className="flex items-center gap-2 px-6 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-extrabold tracking-widest uppercase transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_4px_10px_rgba(168,85,247,0.3)] hover:-translate-y-0.5"
+                   className="flex items-center gap-2 px-6 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-extrabold tracking-widest uppercase transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:-translate-y-0.5"
                  >
                    <span className="hidden md:inline">SKIP</span> <FastForward size={20} strokeWidth={3} className="fill-white" />
                  </button>
@@ -660,8 +654,7 @@ const VidMatches = () => {
           )}
         </div>
 
-        {/* --- RIGHT PANE: CHAT AREA (Themed) --- */}
-        {/* FIX: Issue #3 - Chat is now mobile-friendly with absolute inset overlaying the video when toggled open */}
+        {/* --- RIGHT PANE: CHAT AREA --- */}
         <div className={`
           flex flex-col bg-white dark:bg-[#0f0f0f] border-gray-200 dark:border-[#272729] z-50 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.5)]
           transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] overflow-hidden shrink-0

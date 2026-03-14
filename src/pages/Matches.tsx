@@ -16,12 +16,12 @@ interface Partner {
 type ModalType = 'NONE' | 'REPORT' | 'BLOCK' | 'FRIEND_SUCCESS' | 'LEAVE_WARNING';
 
 const Matches = () => {
-  const { sendMessage, isConnected, subscribe } = useWebSocket();
+  // FIX: Destructure sendRaw instead of sendMessage
+  const { sendRaw, isConnected, subscribe } = useWebSocket();
   const user = useAuthStore(state => state.user);
   const theme = useThemeStore(state => state.theme);
 
   const [status, setStatus] = useState<'IDLE' | 'SEARCHING' | 'CHATTING'>('IDLE');
-  // FIX 1: Track why we are searching to show the correct UI text
   const [searchReason, setSearchReason] = useState<'MANUAL' | 'PARTNER_LEFT'>('MANUAL');
   
   const [messages, setMessages] = useState<{id: number, text: string, isMe: boolean, isSystem?: boolean}[]>([]);
@@ -111,10 +111,14 @@ const Matches = () => {
       }
 
       if (msg.type === 'send_message' && rId === activeRoomIdRef.current) {
-        if (msg.from !== user?.id) {
-           setMessages(prev => [...prev, { id: Date.now(), text: msg.text, isMe: false }]);
+        // Hardened sender check to ensure it catches the message
+        const senderId = msg.from || msg.sender_id || msg.userId;
+        
+        if (senderId !== user?.id) {
+           // Hardened text extraction
+           const messageText = msg.text || msg.content;
+           setMessages(prev => [...prev, { id: Date.now(), text: messageText, isMe: false }]);
            
-           // FIX 2: Play the specific match.mp3 sound for stranger chats
            const audio = new Audio('/match.mp3');
            audio.play().catch(() => {});
            
@@ -130,8 +134,6 @@ const Matches = () => {
         return;
       }
 
-      // FIX 1: Auto-Reconnect!
-      // When the stranger disconnects or leaves, throw them back into the pool with the 'PARTNER_LEFT' reason.
       if ((msg.type === 'stranger_disconnected' || msg.type === 'room_closed') && rId === activeRoomIdRef.current) {
          startSearch('PARTNER_LEFT');
          return;
@@ -170,7 +172,7 @@ const Matches = () => {
         setModalType('FRIEND_SUCCESS'); 
       } else {
         setModalType('NONE');
-        startSearch('MANUAL'); // Manual skip
+        startSearch('MANUAL'); 
       }
     } catch (error) {
       console.error(`Failed to execute ${actionType}:`, error);
@@ -199,7 +201,17 @@ const Matches = () => {
 
     const newMsg = { id: Date.now(), text: inputValue, isMe: true };
     setMessages((prev) => [...prev, newMsg]);
-    sendMessage(activeRoomId, inputValue);
+    
+    // THE ULTIMATE FIX: Exact strict schema the backend html test file expects
+    if (sendRaw) {
+        sendRaw({
+            type: 'send_message',
+            roomId: activeRoomId,
+            text: inputValue,
+            tempId: `tmp_${Date.now()}`
+        });
+    }
+
     setInputValue("");
     setShowEmojiPicker(false);
   };
@@ -353,7 +365,6 @@ const Matches = () => {
                   </div>
                </div>
                
-               {/* FIX 1: Change text dynamically based on why we are searching */}
                <h3 className="mt-8 md:mt-10 text-xl md:text-2xl font-display font-extrabold text-gray-900 dark:text-white transition-colors">
                  {searchReason === 'PARTNER_LEFT' ? 'Partner disconnected...' : 'Looking for someone...'}
                </h3>
