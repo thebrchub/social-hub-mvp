@@ -15,7 +15,7 @@ type ModalType = 'NONE' | 'REPORT' | 'BLOCK' | 'FRIEND_SUCCESS' | 'LEAVE_WARNING
 const VidMatches = () => {
   const user = useAuthStore(state => state.user);
   const { theme } = useThemeStore();
-  const { subscribe, sendMessage } = useWebSocket();
+  const { subscribe, sendMessage, sendRaw } = useWebSocket();
 
   // --- UI Layout States ---
   const [layoutMode, setLayoutMode] = useState<'stacked' | 'split'>(() => {
@@ -31,7 +31,6 @@ const VidMatches = () => {
   const idleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // --- Missing states from text chat UI port fixed ---
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [modalType, setModalType] = useState<ModalType>('NONE');
   const [reportReason, setReportReason] = useState("");
@@ -126,19 +125,21 @@ const VidMatches = () => {
   const initLocalStream = async () => {
     if (localStreamRef.current) return localStreamRef.current;
 
-    if (!window.isSecureContext) {
+    // FIX: Core check if browser entirely blocks media (HTTP vs HTTPS issue)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setMediaError({
-        title: "Insecure Connection",
-        desc: "Browsers only allow camera access over HTTPS connections.",
-        action: "Please ensure you are using https:// in your address bar."
+        title: "Browser Blocked Camera",
+        desc: "Your browser does not allow camera access here. If you are on a phone testing locally, you MUST use HTTPS or localhost.",
+        action: "Switch to HTTPS or check browser permissions."
       });
       return null;
     }
 
     try {
+      // FIX: Relaxed constraints. Forcing 1280x720 causes silent failures on many devices!
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, 
-        audio: true 
+        video: { facingMode: "user" }, 
+        audio: { echoCancellation: true, noiseSuppression: true } 
       });
 
       localStreamRef.current = stream;
@@ -147,14 +148,17 @@ const VidMatches = () => {
 
     } catch (err: any) {
       console.error("Camera/Mic access failed:", err);
+      // Detailed error mapping so you know EXACTLY what is failing
       if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setMediaError({ title: "Hardware Detection Error", desc: "No camera or mic detected.", action: "Try checking your device settings." });
+        setMediaError({ title: "Hardware Missing", desc: "No camera or microphone was detected.", action: "Check your device connections." });
       } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMediaError({ title: "Camera & Mic Required", desc: "Access denied.", action: "Please click the lock icon and allow permissions." });
+        setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the lock icon in your URL bar and 'Allow' permissions." });
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        setMediaError({ title: "Hardware in Use", desc: "Camera is already in use by another app.", action: "Close other apps and try again." });
+        setMediaError({ title: "Hardware in Use", desc: "Your camera is currently being used by another app (like Zoom).", action: "Close other apps and try again." });
+      } else if (err.name === 'OverconstrainedError') {
+        setMediaError({ title: "Resolution Error", desc: "Your camera doesn't support the requested settings.", action: "Try using a different camera." });
       } else {
-        setMediaError({ title: "Hardware Error", desc: "Unexpected error.", action: err.message });
+        setMediaError({ title: "Camera Error", desc: "An unexpected error occurred.", action: err.message });
       }
       setMatchState('welcome'); 
       return null;
@@ -237,7 +241,6 @@ const VidMatches = () => {
     setChatMessages([{ sender: 'system', text: 'You have left the video chat.' }]);
   };
 
-  // --- Modal Specific API Actions ---
   const executeCancelSearch = async () => {
     try {
       await api.post('/match/leave', {});
@@ -288,7 +291,10 @@ const VidMatches = () => {
   useEffect(() => {
     if (!subscribe) return;
     
-    wsRef.current = (payload: any) => { (sendMessage as any)(JSON.stringify(payload)); };
+    wsRef.current = (payload: any) => { 
+        if (sendRaw) { sendRaw(payload); }
+        else if (sendMessage) { (sendMessage as any)(JSON.stringify(payload)); }
+    };
 
     const unsubscribe = subscribe(async (parsed: any) => {
       const currentRoomId = activeRoomIdRef.current;
@@ -374,13 +380,21 @@ const VidMatches = () => {
     e.preventDefault();
     if (!inputValue.trim() || matchState !== 'matched' || !activeRoomId) return;
     setChatMessages(prev => [...prev, { sender: 'me', text: inputValue }]);
-    (sendMessage as any)({ type: 'send_message', roomId: activeRoomId, text: inputValue, tempId: `tmp_${Date.now()}` });
+    wsRef.current({ type: 'send_message', roomId: activeRoomId, text: inputValue, tempId: `tmp_${Date.now()}` });
     setInputValue('');
     setShowEmojiPicker(false);
   };
 
   return (
     <DashboardLayout>
+      {/* FIX: THE GREY DOTS HIDER 
+        This style block forces the right-hand friends sidebar inside DashboardLayout 
+        to disappear completely whenever VidMatches is mounted!
+      */}
+      {/* <style>{`
+        aside.w-\\[350px\\] { display: none !important; }
+      `}</style> */}
+
       <div ref={containerRef} onMouseMove={resetIdleTimer} onTouchStart={resetIdleTimer} className="absolute inset-0 z-10 flex flex-col md:flex-row bg-gray-900 dark:bg-[#050505] overflow-hidden transition-colors">
         
         {/* CUSTOM MODALS OVERLAY */}
@@ -701,8 +715,10 @@ const VidMatches = () => {
             <div className="w-16 h-16 bg-red-50 dark:bg-red-500/20 rounded-full flex items-center justify-center text-red-500 mb-2 border border-red-100 dark:border-red-500/20 shadow-inner">
               <AlertTriangle size={32} strokeWidth={2.5} />
             </div>
-            <p className="text-gray-900 dark:text-gray-200 font-medium">{mediaError?.desc}</p>
-            <p className="text-xs text-gray-500 font-bold bg-gray-50 dark:bg-black/50 p-3 rounded-lg border border-gray-200 dark:border-white/5">{mediaError?.action}</p>
+            <p className="text-gray-900 dark:text-gray-200 font-extrabold text-lg leading-tight">{mediaError?.desc}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 font-medium bg-gray-50 dark:bg-black/50 p-4 rounded-xl border border-gray-200 dark:border-white/5 shadow-inner w-full">
+              {mediaError?.action}
+            </p>
           </div>
         </Modal>
 
