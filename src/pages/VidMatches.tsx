@@ -8,7 +8,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore } from '../store/useThemeStore';
 import Modal from '../components/Modal';
 
-
 type MatchState = 'welcome' | 'searching' | 'matched';
 type ModalType = 'NONE' | 'REPORT' | 'BLOCK' | 'FRIEND_SUCCESS' | 'LEAVE_WARNING';
 
@@ -107,38 +106,58 @@ const VidMatches = () => {
     setPeerSync(null);
   };
 
-  const handlePeerDisconnected = () => {
-    setChatMessages(prev => [...prev, { sender: 'system', text: 'Stranger disconnected.' }]);
+  // FIX: Issue #5 - Auto Re-Search when Stranger Disconnects!
+  const handlePeerDisconnected = async () => {
+    setChatMessages(prev => [...prev, { sender: 'system', text: 'Stranger left. Finding a new match...' }]);
     cleanupMatch();
-    setMatchState('welcome'); 
+    setSlideState('sliding-out');
+    
+    try {
+      await api.post('/match/leave', {});
+      await api.post('/match/enter', {});
+      
+      setTimeout(() => {
+        setMatchState('searching');
+        setSlideState('idle');
+      }, 400); 
+    } catch (err) {
+      setMatchState('welcome');
+    }
   };
 
   const getIceConfig = async () => {
     try {
       const res = await api.get('/calls/config');
-      return res.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }];
+      // FIX: Issue #1 - Added multiple Google STUN fallbacks for better internet NAT traversal
+      return res.iceServers || [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ];
     } catch (e) {
-      return [{ urls: 'stun:stun.l.google.com:19302' }];
+      return [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ];
     }
   };
 
   const initLocalStream = async () => {
     if (localStreamRef.current) return localStreamRef.current;
 
-    // FIX: Core check if browser entirely blocks media (HTTP vs HTTPS issue)
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setMediaError({
         title: "Browser Blocked Camera",
-        desc: "Your browser does not allow camera access here. If you are on a phone testing locally, you MUST use HTTPS or localhost.",
-        action: "Switch to HTTPS or check browser permissions."
+        desc: "Your browser does not allow camera access here.",
+        action: "If you are on a phone testing locally, you MUST use HTTPS or localhost."
       });
       return null;
     }
 
     try {
-      // FIX: Relaxed constraints. Forcing 1280x720 causes silent failures on many devices!
+      // FIX: Issue #2 - Added HD (720p) "ideal" constraints to get crisp video without crashing bad cameras
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "user" }, 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, 
         audio: { echoCancellation: true, noiseSuppression: true } 
       });
 
@@ -148,18 +167,17 @@ const VidMatches = () => {
 
     } catch (err: any) {
       console.error("Camera/Mic access failed:", err);
-      // Detailed error mapping so you know EXACTLY what is failing
+      
       if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setMediaError({ title: "Hardware Missing", desc: "No camera or microphone was detected.", action: "Check your device connections." });
+        setMediaError({ title: "Hardware Missing", desc: "No camera or microphone was detected by your browser.", action: "Check if your webcam is plugged in. If on a laptop, ensure the physical camera switch on the side or keyboard is turned ON." });
       } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the lock icon in your URL bar and 'Allow' permissions." });
+        setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the 'Lock' icon in your browser's URL bar, change Camera/Mic to 'Allow', and refresh the page." });
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        setMediaError({ title: "Hardware in Use", desc: "Your camera is currently being used by another app (like Zoom).", action: "Close other apps and try again." });
-      } else if (err.name === 'OverconstrainedError') {
-        setMediaError({ title: "Resolution Error", desc: "Your camera doesn't support the requested settings.", action: "Try using a different camera." });
+        setMediaError({ title: "Hardware Blocked or In Use", desc: "Your camera is either being used by another app, or it is disabled by a hardware privacy switch.", action: "1. Close Zoom/Meet. 2. Look at your keyboard for a camera icon (like F8 or F10) and press it to enable the camera. 3. Check for a physical sliding shutter over your lens." });
       } else {
         setMediaError({ title: "Camera Error", desc: "An unexpected error occurred.", action: err.message });
       }
+      
       setMatchState('welcome'); 
       return null;
     }
@@ -177,14 +195,20 @@ const VidMatches = () => {
       }
     };
 
+    // FIX: Issue #1 - Safer multi-browser remote stream handling
     pc.ontrack = (event) => {
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
+      if (remoteVideoRef.current) {
+        if (event.streams && event.streams[0]) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        } else {
+          let inboundStream = new MediaStream([event.track]);
+          remoteVideoRef.current.srcObject = inboundStream;
+        }
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed' || pc.iceConnectionState === 'disconnected') {
         handlePeerDisconnected();
       }
     };
@@ -387,15 +411,15 @@ const VidMatches = () => {
 
   return (
     <DashboardLayout>
-      {/* FIX: THE GREY DOTS HIDER 
-        This style block forces the right-hand friends sidebar inside DashboardLayout 
+      {/* This style block forces the right-hand friends sidebar inside DashboardLayout 
         to disappear completely whenever VidMatches is mounted!
-      */}
-      {/* <style>{`
-        aside.w-\\[350px\\] { display: none !important; }
-      `}</style> */}
+      // */}
+      // <style>{`
+      //   aside.w-\\[350px\\] { display: none !important; }
+      // `}</style>
 
-      <div ref={containerRef} onMouseMove={resetIdleTimer} onTouchStart={resetIdleTimer} className="absolute inset-0 z-10 flex flex-col md:flex-row bg-gray-900 dark:bg-[#050505] overflow-hidden transition-colors">
+      {/* FIX: Issue #4 - Added adaptive background colors (bg-gray-100 dark:bg-[#050505]) for Light Theme support */}
+      <div ref={containerRef} onMouseMove={resetIdleTimer} onTouchStart={resetIdleTimer} className="absolute inset-0 z-50 flex flex-col md:flex-row bg-gray-100 dark:bg-[#050505] overflow-hidden transition-colors">
         
         {/* CUSTOM MODALS OVERLAY */}
         {modalType !== 'NONE' && (
@@ -481,7 +505,7 @@ const VidMatches = () => {
         )}
 
         {/* --- LEFT PANE: VIDEO AREA --- */}
-        <div className="relative flex flex-col bg-black flex-1 shrink-0 z-20 overflow-hidden">
+        <div className="relative flex flex-col bg-gray-100 dark:bg-[#050505] flex-1 shrink-0 z-20 overflow-hidden transition-colors">
           
           {/* HEADER CONTROLS */}
           <div className={`absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-start z-40 transition-opacity duration-500 ${showControls || matchState === 'welcome' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
@@ -496,7 +520,8 @@ const VidMatches = () => {
                 <button onClick={() => setLayoutMode(prev => prev === 'stacked' ? 'split' : 'stacked')} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hidden md:block hover:-translate-y-0.5" title="Switch Layout">
                   {layoutMode === 'stacked' ? <Columns size={18} strokeWidth={2.5} /> : <Rows size={18} strokeWidth={2.5} />}
                 </button>
-                <button onClick={() => setShowChat(!showChat)} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hidden md:block hover:-translate-y-0.5" title="Toggle Chat">
+                {/* FIX: Issue #3 - Removed 'hidden md:block' to allow mobile users to open the chat pane */}
+                <button onClick={() => setShowChat(!showChat)} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hover:-translate-y-0.5" title="Toggle Chat">
                   {showChat ? <MessageSquareOff size={18} strokeWidth={2.5} /> : <MessageSquare size={18} strokeWidth={2.5} />}
                 </button>
                 <button onClick={toggleFullscreen} className="bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white p-3 rounded-xl transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.1)] hidden md:block hover:-translate-y-0.5" title="Toggle Fullscreen">
@@ -547,21 +572,21 @@ const VidMatches = () => {
              )}
 
              {/* STRANGER VIDEO */}
-             <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-[#111] border border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
+             <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
                 
                 <div className={`absolute bottom-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 text-white text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState === 'matched' ? 'opacity-100' : 'opacity-0'}`}>
                    STRANGER
                 </div>
 
                 {matchState === 'searching' && (
-                   <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in fade-in zoom-in duration-500 bg-[#0a0a0a]">
+                   <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in fade-in zoom-in duration-500 bg-gray-100 dark:bg-[#0a0a0a]">
                       <div className="relative w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
                          <span className="absolute inset-0 border-4 border-purple-500/30 rounded-full animate-ping"></span>
-                         <div className="w-20 h-20 md:w-24 md:h-24 bg-[#1A1A1B] border border-purple-500/50 rounded-full flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_10px_20px_rgba(168,85,247,0.2)] z-10">
+                         <div className="w-20 h-20 md:w-24 md:h-24 bg-white dark:bg-[#1A1A1B] border border-purple-500/50 rounded-full flex items-center justify-center shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_10px_20px_rgba(168,85,247,0.2)] z-10">
                             <Loader2 className="w-8 h-8 md:w-10 md:h-10 text-purple-500 animate-spin" strokeWidth={2.5} />
                          </div>
                       </div>
-                      <p className="text-gray-400 font-bold mt-8 animate-pulse text-sm md:text-base tracking-widest uppercase">Finding someone...</p>
+                      <p className="text-gray-500 dark:text-gray-400 font-bold mt-8 animate-pulse text-sm md:text-base tracking-widest uppercase">Finding someone...</p>
                    </div>
                 )}
 
@@ -581,7 +606,7 @@ const VidMatches = () => {
              </div>
 
              {/* MY VIDEO */}
-             <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-gray-900 border border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
+             <div className={`relative w-full rounded-[1.5rem] md:rounded-[2rem] overflow-hidden bg-gray-200 dark:bg-[#111] border border-gray-300 dark:border-white/10 shadow-inner flex-1 transition-all duration-300 ${layoutMode === 'stacked' ? 'max-w-4xl' : ''}`}>
                 <div className={`absolute bottom-4 left-4 bg-blue-600/80 backdrop-blur-md border border-white/20 text-white text-[10px] font-extrabold tracking-widest px-3 py-1.5 rounded-lg z-20 transition-opacity duration-500 ${showControls && matchState !== 'welcome' ? 'opacity-100' : 'opacity-0'}`}>
                    YOU
                 </div>
@@ -589,8 +614,8 @@ const VidMatches = () => {
                 <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover transition-opacity scale-x-[-1] ${isCamOff ? 'opacity-0' : 'opacity-100'}`} />
                 
                 {isCamOff && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900">
-                    <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-3">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900">
+                    <div className="w-16 h-16 rounded-full bg-black/5 dark:bg-white/5 flex items-center justify-center mb-3 border border-gray-300 dark:border-transparent">
                        <VideoOff size={32} className="text-gray-500" strokeWidth={2.5} />
                     </div>
                     <span className="text-gray-500 text-xs font-bold uppercase tracking-widest">Camera Disabled</span>
@@ -636,10 +661,11 @@ const VidMatches = () => {
         </div>
 
         {/* --- RIGHT PANE: CHAT AREA (Themed) --- */}
+        {/* FIX: Issue #3 - Chat is now mobile-friendly with absolute inset overlaying the video when toggled open */}
         <div className={`
-          flex flex-col bg-white dark:bg-[#0f0f0f] border-gray-200 dark:border-[#272729] z-30 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.5)]
+          flex flex-col bg-white dark:bg-[#0f0f0f] border-gray-200 dark:border-[#272729] z-50 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.5)]
           transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] overflow-hidden shrink-0
-          ${showChat ? 'w-full h-[40vh] md:h-full md:w-[400px] border-t md:border-t-0 md:border-l opacity-100' : 'w-full h-0 md:h-full md:w-0 border-none opacity-0'}
+          ${showChat ? 'absolute inset-0 md:relative md:w-[400px] border-l opacity-100' : 'absolute w-0 h-0 md:h-full md:w-0 border-none opacity-0'}
         `}>
           <div className="w-full md:w-[400px] h-full flex flex-col shrink-0">
               
