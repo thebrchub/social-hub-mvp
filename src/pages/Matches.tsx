@@ -6,7 +6,6 @@ import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore } from '../store/useThemeStore';
-import { WebSocketContext } from '../providers/WebSocketContext';
 
 interface Partner {
   name: string;
