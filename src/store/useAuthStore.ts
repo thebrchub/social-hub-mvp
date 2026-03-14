@@ -39,8 +39,8 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         // Wipe the actual JWT tokens your backend uses
-        localStorage.removeItem('aarpaar_access_token');
-        localStorage.removeItem('aarpaar_refresh_token');
+        localStorage.removeItem('zquab_access_token');
+        localStorage.removeItem('zquab_refresh_token');
         localStorage.removeItem('auth-storage'); // Wipe zustand cache
         
         set({ isAuthenticated: false, user: null, needsOnboarding: false });

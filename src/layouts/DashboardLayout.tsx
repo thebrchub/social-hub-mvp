@@ -8,8 +8,11 @@ import { useFriendStore } from '../store/useFriendStore';
 import { useThemeStore } from '../store/useThemeStore';
 import NotificationsPanel from '../components/NotificationsPanel';
 import { api } from '../services/api';
-import { useWebSocket } from '../providers/WebSocketProvider';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { create } from 'zustand'; 
+import { usePushNotifications } from '../hooks/usePushNotifications';
+// ADDED: Import the GlobalCallFloater
+import { GlobalCallFloater } from '../components/chats/GlobalCallFloater';
 
 interface DashboardLayoutProps { children: ReactNode; }
 
@@ -45,7 +48,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const { friends: sidebarFriends, isLoading: isLoadingFriends, fetchFriends } = useFriendStore();
   const { subscribe } = useWebSocket(); 
   const { theme, toggleTheme } = useThemeStore();
-  
+  usePushNotifications();
   const { cachedRequestsCount, hasFetched, hasSeenRequests, setRequestsData, markRequestsSeen, resetDot } = useLayoutCache();
 
   const currentYear = new Date().getFullYear();
@@ -65,6 +68,15 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     if (theme === 'dark') document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [theme]);
+
+  // FIX: Handle Magic Link post-login redirects
+  useEffect(() => {
+      const returnTo = localStorage.getItem('zquab_return_to');
+      if (returnTo && returnTo !== location.pathname) {
+          localStorage.removeItem('zquab_return_to'); 
+          navigate(returnTo);
+      }
+  }, [navigate, location.pathname]);
 
   const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'|'warning'} | null>(null);
   const showToast = (msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
@@ -127,15 +139,11 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
               playNotificationSound();
           }
           
-          // FIX: Stop double notification sound on the Stranger Match page!
           if (data.type === 'send_message') {
               const isMe = String(data.from) === String(user?.id) || String(data.sender_id) === String(user?.id);
               const isCurrentlyOnChatsPage = window.location.pathname.includes('/chats');
               const isCurrentlyOnMatchesPage = window.location.pathname.includes('/matches');
               
-              // Only play the default message sound if they are NOT the sender, 
-              // AND they are NOT actively looking at the DMs page,
-              // AND they are NOT actively looking at the Stranger Match page (which handles its own sounds).
               if (!isMe && !isCurrentlyOnChatsPage && !isCurrentlyOnMatchesPage) {
                   playNotificationSound();
               }
@@ -298,6 +306,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-gray-50 dark:bg-[#030303] text-gray-900 dark:text-gray-200 font-sans overflow-hidden relative transition-colors duration-300">
       
+      {/* ADDED: Global Call Floater is now mounted here to listen for calling events everywhere */}
+      <GlobalCallFloater />
+
       {toastMessage && (
         <div className={`fixed top-20 right-6 z-[99999] px-4 py-3 rounded-xl shadow-2xl animate-in slide-in-from-top-5 flex items-center gap-3 font-bold text-white text-xs sm:text-sm ${
            toastMessage.type === 'success' ? 'bg-green-600' : 
@@ -395,52 +406,52 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
       </header>
 
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
-         {mobileMenuOpen && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[90] md:hidden transition-opacity duration-300" onClick={() => setMobileMenuOpen(false)} />}
+          {mobileMenuOpen && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[90] md:hidden transition-opacity duration-300" onClick={() => setMobileMenuOpen(false)} />}
 
-         <aside className={`fixed md:relative inset-y-0 left-0 z-[100] transform ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 w-[260px] ${isSidebarCollapsed ? 'md:w-[80px]' : 'md:w-[270px]'} bg-white dark:bg-[#1A1A1B] md:bg-gray-50 md:dark:bg-[#030303] border-r border-gray-200 dark:border-[#272729] flex flex-col transition-all duration-300 ease-in-out shrink-0 h-full md:h-auto`}>
-            <div className="flex md:hidden items-center justify-between p-4 border-b border-gray-200 dark:border-[#272729] shrink-0">
-                <div className="flex items-center gap-2 font-display font-bold text-xl text-gray-900 dark:text-white"><img src="/logo.svg" alt="zQuab" className="w-10 h-10" /> zQuab</div>
-                <button onClick={() => setMobileMenuOpen(false)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20} strokeWidth={2.5} /></button>
-            </div>
-            <div ref={sidebarScrollRef} onScroll={handleSidebarScroll} className={`flex-1 flex flex-col py-4 scrollbar-hide relative ${isSidebarCollapsed ? 'md:overflow-visible overflow-y-auto' : 'overflow-y-auto'}`}>
-              <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Feeds</span></div>
-              <nav className="space-y-1 px-2 shrink-0"><NavItem collapsed={isSidebarCollapsed} icon={<Home size={22} strokeWidth={2.5} />} label="Home" active={location.pathname === '/dashboard'} onClick={() => { navigate('/dashboard'); setMobileMenuOpen(false); }} /></nav>
-              <div className="border-t border-gray-200 dark:border-[#272729] my-4 mx-4 shrink-0"></div>
-              <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Social Hangout</span></div>
-              <nav className="space-y-1 px-2 shrink-0">
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Zap size={22} strokeWidth={2.5} />} label="Stranger Chat" active={location.pathname === '/matches'} onClick={() => { navigate('/matches'); setMobileMenuOpen(false); }} />
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Video size={22} strokeWidth={2.5} />} label="Stranger Cam" active={location.pathname === '/vid-matches'} onClick={() => { navigate('/vid-matches'); setMobileMenuOpen(false); }} badge="HOT" />
-                 <NavItem collapsed={isSidebarCollapsed} icon={<MessageSquare size={22} strokeWidth={2.5} />} label="Messages" active={location.pathname === '/chats'} onClick={() => { navigate('/chats'); setMobileMenuOpen(false); }} badge={unreadChatsCount > 0 ? unreadChatsCount : undefined} />
-                 
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Users size={22} strokeWidth={2.5} />} label="Connections" active={location.pathname === '/friends'} onClick={() => { navigate('/friends'); setMobileMenuOpen(false); }} badge={pendingFriendsCount > 0 ? pendingFriendsCount : undefined} />
-                 
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Settings size={22} strokeWidth={2.5} />} label="Settings" active={location.pathname === '/settings'} onClick={() => { navigate('/settings'); setMobileMenuOpen(false); }} />
-              </nav>
-              <div className="border-t border-gray-200 dark:border-[#272729] my-4 mx-4 shrink-0"></div>
-              <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Platform</span></div>
-              <nav className="space-y-1 px-2 shrink-0">
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Rocket size={22} strokeWidth={2.5} />} label="Coming Soon" active={location.pathname === '/labs'} onClick={() => { navigate('/labs'); setMobileMenuOpen(false); }} highlight={true} />
-                 <NavItem collapsed={isSidebarCollapsed} icon={<Heart size={22} strokeWidth={2.5} className={location.pathname === '/donations' ? "text-blue-600 dark:text-blue-500" : "text-gray-400 dark:text-gray-500"} />} label="Support Us" active={location.pathname === '/donations'} onClick={() => { navigate('/donations'); setMobileMenuOpen(false); }} />
-              </nav>
-               <div className="mt-auto px-2 pb-4 relative group pt-4 shrink-0">
-                   {isSidebarCollapsed && (
-                       <div className="absolute left-[70px] top-1/2 -translate-y-1/2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-xs font-extrabold px-3 py-2 rounded-xl shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-[9999] whitespace-nowrap translate-x-1 group-hover:translate-x-0 hidden md:block border border-gray-700 dark:border-gray-200">
-                           Log Out<div className="absolute top-1/2 -translate-y-1/2 -left-[4px] border-y-[5px] border-y-transparent border-r-[5px] border-r-gray-900 dark:border-r-white"></div>
-                       </div>
-                   )}
-                   <button onClick={handleLogout} className={`flex items-center transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'md:justify-center md:px-0 px-4' : 'px-4 gap-4'} text-red-600 dark:text-red-500 border border-transparent hover:bg-white dark:hover:bg-[#3f1616] hover:border-red-200 dark:hover:border-[#5c1c1c] hover:-translate-y-0.5 w-full py-3 rounded-2xl overflow-hidden font-bold`}>
-                      <div className="shrink-0 flex items-center justify-center w-6"><LogOut size={22} strokeWidth={2.5} /></div>
-                      <span className={`text-sm whitespace-nowrap transition-all duration-300 origin-left flex-1 text-left ${isSidebarCollapsed ? 'md:opacity-0 md:w-0 md:h-0 md:flex-none md:overflow-hidden md:scale-95' : 'opacity-100 scale-100'}`}>Log Out</span>
-                   </button>
-               </div>
-            </div>
-         </aside>
+          <aside className={`fixed md:relative inset-y-0 left-0 z-[100] transform ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 w-[260px] ${isSidebarCollapsed ? 'md:w-[80px]' : 'md:w-[270px]'} bg-white dark:bg-[#1A1A1B] md:bg-gray-50 md:dark:bg-[#030303] border-r border-gray-200 dark:border-[#272729] flex flex-col transition-all duration-300 ease-in-out shrink-0 h-full md:h-auto`}>
+             <div className="flex md:hidden items-center justify-between p-4 border-b border-gray-200 dark:border-[#272729] shrink-0">
+                 <div className="flex items-center gap-2 font-display font-bold text-xl text-gray-900 dark:text-white"><img src="/logo.svg" alt="zQuab" className="w-10 h-10" /> zQuab</div>
+                 <button onClick={() => setMobileMenuOpen(false)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20} strokeWidth={2.5} /></button>
+             </div>
+             <div ref={sidebarScrollRef} onScroll={handleSidebarScroll} className={`flex-1 flex flex-col py-4 scrollbar-hide relative ${isSidebarCollapsed ? 'md:overflow-visible overflow-y-auto' : 'overflow-y-auto'}`}>
+               <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Feeds</span></div>
+               <nav className="space-y-1 px-2 shrink-0"><NavItem collapsed={isSidebarCollapsed} icon={<Home size={22} strokeWidth={2.5} />} label="Home" active={location.pathname === '/dashboard'} onClick={() => { navigate('/dashboard'); setMobileMenuOpen(false); }} /></nav>
+               <div className="border-t border-gray-200 dark:border-[#272729] my-4 mx-4 shrink-0"></div>
+               <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Social Hangout</span></div>
+               <nav className="space-y-1 px-2 shrink-0">
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Zap size={22} strokeWidth={2.5} />} label="Stranger Chat" active={location.pathname === '/matches'} onClick={() => { navigate('/matches'); setMobileMenuOpen(false); }} />
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Video size={22} strokeWidth={2.5} />} label="Stranger Cam" active={location.pathname === '/vid-matches'} onClick={() => { navigate('/vid-matches'); setMobileMenuOpen(false); }} badge="HOT" />
+                  <NavItem collapsed={isSidebarCollapsed} icon={<MessageSquare size={22} strokeWidth={2.5} />} label="Messages" active={location.pathname === '/chats'} onClick={() => { navigate('/chats'); setMobileMenuOpen(false); }} badge={unreadChatsCount > 0 ? unreadChatsCount : undefined} />
+                  
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Users size={22} strokeWidth={2.5} />} label="Connections" active={location.pathname === '/friends'} onClick={() => { navigate('/friends'); setMobileMenuOpen(false); }} badge={pendingFriendsCount > 0 ? pendingFriendsCount : undefined} />
+                  
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Settings size={22} strokeWidth={2.5} />} label="Settings" active={location.pathname === '/settings'} onClick={() => { navigate('/settings'); setMobileMenuOpen(false); }} />
+               </nav>
+               <div className="border-t border-gray-200 dark:border-[#272729] my-4 mx-4 shrink-0"></div>
+               <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Platform</span></div>
+               <nav className="space-y-1 px-2 shrink-0">
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Rocket size={22} strokeWidth={2.5} />} label="Coming Soon" active={location.pathname === '/labs'} onClick={() => { navigate('/labs'); setMobileMenuOpen(false); }} highlight={true} />
+                  <NavItem collapsed={isSidebarCollapsed} icon={<Heart size={22} strokeWidth={2.5} className={location.pathname === '/donations' ? "text-blue-600 dark:text-blue-500" : "text-gray-400 dark:text-gray-500"} />} label="Support Us" active={location.pathname === '/donations'} onClick={() => { navigate('/donations'); setMobileMenuOpen(false); }} />
+               </nav>
+                <div className="mt-auto px-2 pb-4 relative group pt-4 shrink-0">
+                    {isSidebarCollapsed && (
+                        <div className="absolute left-[70px] top-1/2 -translate-y-1/2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-xs font-extrabold px-3 py-2 rounded-xl shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-[9999] whitespace-nowrap translate-x-1 group-hover:translate-x-0 hidden md:block border border-gray-700 dark:border-gray-200">
+                            Log Out<div className="absolute top-1/2 -translate-y-1/2 -left-[4px] border-y-[5px] border-y-transparent border-r-[5px] border-r-gray-900 dark:border-r-white"></div>
+                        </div>
+                    )}
+                    <button onClick={handleLogout} className={`flex items-center transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'md:justify-center md:px-0 px-4' : 'px-4 gap-4'} text-red-600 dark:text-red-500 border border-transparent hover:bg-white dark:hover:bg-[#3f1616] hover:border-red-200 dark:hover:border-[#5c1c1c] hover:-translate-y-0.5 w-full py-3 rounded-2xl overflow-hidden font-bold`}>
+                       <div className="shrink-0 flex items-center justify-center w-6"><LogOut size={22} strokeWidth={2.5} /></div>
+                       <span className={`text-sm whitespace-nowrap transition-all duration-300 origin-left flex-1 text-left ${isSidebarCollapsed ? 'md:opacity-0 md:w-0 md:h-0 md:flex-none md:overflow-hidden md:scale-95' : 'opacity-100 scale-100'}`}>Log Out</span>
+                    </button>
+                </div>
+             </div>
+          </aside>
 
-         <main className="flex-1 flex flex-col min-w-0 bg-gray-50 dark:bg-[#030303] relative overflow-hidden transition-colors duration-300">
-            {children}
-         </main>
+          <main className="flex-1 flex flex-col min-w-0 bg-gray-50 dark:bg-[#030303] relative overflow-hidden transition-colors duration-300">
+             {children}
+          </main>
 
-         <aside className="w-[350px] bg-gray-50 dark:bg-[#030303] border-l border-gray-200 dark:border-[#272729] hidden lg:flex flex-col p-6 transition-colors duration-300 h-full overflow-hidden">
+          <aside className="w-[350px] bg-gray-50 dark:bg-[#030303] border-l border-gray-200 dark:border-[#272729] hidden lg:flex flex-col p-6 transition-colors duration-300 h-full overflow-hidden">
             <div className="bg-white dark:bg-[#1A1A1B] rounded-3xl border border-gray-200 dark:border-[#343536] p-4 flex flex-col flex-1 min-h-0 shadow-sm hover:shadow-md transition-all duration-300">
                <div className="flex items-center gap-3 mb-2 shrink-0">
                   <div className="w-10 h-10 bg-blue-50 dark:bg-[#1E3A8A] rounded-full flex items-center justify-center text-blue-600 dark:text-blue-100 font-bold text-sm">
@@ -482,7 +493,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                <span className="hover:text-gray-900 dark:hover:text-white cursor-pointer transition-colors">Help</span>
                <span>© {currentYear} zQuab</span>
             </div>
-         </aside>
+          </aside>
       </div>
     </div>
   );

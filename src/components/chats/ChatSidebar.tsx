@@ -4,13 +4,13 @@ import { Search, Plus, Loader2, Users, PhoneIncoming, PhoneOutgoing, PhoneMissed
 export const ChatSidebar = ({ 
   rooms, requests, groupInvites, callHistory, activeTab, setActiveTab, selectedRoomId, setSelectedRoomId, 
   presence, user, formatTime, newUsername, setNewUsername, isCreating, handleCreateDM,
-  isLoadingSidebar, handleGroupInviteAction, setShowGroupModal, handleCallLogClick, userMap
+  isLoadingSidebar, handleGroupInviteAction, setShowGroupModal, handleCallLogClick, userMap, activeCall
 }: any) => {
   
   const [isGroupsExpanded, setIsGroupsExpanded] = useState(false);
 
   const groupRooms = rooms.filter((r: any) => r.type === 'group' || r.type === 'GROUP');
-  const dmRooms = rooms.filter((r: any) => r.type === 'DM' || !r.type);
+  const dmRooms = rooms.filter((r: any) => r.type === 'DM' || !r.type || r.type === 'private' || r.type === 'private_dm');
   const messageRequests = requests.filter((req: any) => req.last_message_preview && req.last_message_preview.trim() !== '');
 
   const totalRequests = messageRequests.length + (groupInvites?.length || 0);
@@ -22,7 +22,6 @@ export const ChatSidebar = ({
       return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // FIX: Clean the sidebar previews to ensure the `>` symbol is never visible to the user
   const renderCleanPreview = (text: string) => {
       if (!text) return 'No messages';
       if (text.startsWith('> ')) {
@@ -113,7 +112,7 @@ export const ChatSidebar = ({
                                               <span className={`text-[11px] truncate pr-2 font-medium ${room.unread_count > 0 ? 'text-gray-900 dark:text-gray-200' : 'text-gray-500'}`}>{renderCleanPreview(room.last_message_preview)}</span>
                                               {room.unread_count > 0 && (
                                                   <div className="min-w-[18px] h-[18px] bg-blue-600 rounded-full flex items-center justify-center text-[9px] font-extrabold text-white px-1 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_2px_8px_rgba(37,99,235,0.4)] shrink-0">
-                                                    {room.unread_count > 99 ? '99+' : room.unread_count}
+                                                      {room.unread_count > 99 ? '99+' : room.unread_count}
                                                   </div>
                                               )}
                                           </div>
@@ -177,14 +176,19 @@ export const ChatSidebar = ({
                                    </div>
                                    <div className="flex-1 min-w-0">
                                        <div className="flex justify-between items-center mb-0.5">
-                                           <span className={`text-[14px] truncate ${selectedRoomId === room.room_id ? 'text-blue-700 dark:text-blue-400 font-extrabold' : room.unread_count > 0 ? 'text-gray-900 dark:text-white font-extrabold' : 'text-gray-700 dark:text-gray-200 font-bold'}`}>{displayName}</span>
+                                           <div className="flex items-center gap-1.5 min-w-0">
+                                               <span className={`text-[14px] truncate ${selectedRoomId === room.room_id ? 'text-blue-700 dark:text-blue-400 font-extrabold' : room.unread_count > 0 ? 'text-gray-900 dark:text-white font-extrabold' : 'text-gray-700 dark:text-gray-200 font-bold'}`}>{displayName}</span>
+                                               {activeCall?.peerId === room.partner_id && (
+                                                   <span className="shrink-0 px-1.5 py-0.5 bg-green-500/20 text-green-500 text-[8px] font-extrabold uppercase tracking-widest rounded-md animate-pulse">In Call</span>
+                                               )}
+                                           </div>
                                            <span className={`text-[9px] shrink-0 font-bold ${room.unread_count > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'}`}>{formatTime(room.last_message_at)}</span>
                                        </div>
                                        <div className="flex justify-between items-center">
                                            <span className={`text-[11px] truncate pr-2 font-medium ${room.unread_count > 0 ? 'text-gray-900 dark:text-gray-200' : 'text-gray-500'}`}>{renderCleanPreview(room.last_message_preview)}</span>
                                            {room.unread_count > 0 && (
                                                <div className="min-w-[18px] h-[18px] bg-blue-600 rounded-full flex items-center justify-center text-[9px] font-extrabold text-white px-1 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_2px_8px_rgba(37,99,235,0.4)] shrink-0">
-                                                 {room.unread_count > 99 ? '99+' : room.unread_count}
+                                                   {room.unread_count > 99 ? '99+' : room.unread_count}
                                                </div>
                                            )}
                                        </div>
@@ -200,18 +204,18 @@ export const ChatSidebar = ({
              <div className="p-2 flex-1 bg-white dark:bg-[#0a0a0a] transition-colors">
                 <h3 className="text-[10px] font-extrabold text-gray-500 uppercase tracking-widest px-3 mb-2 mt-2">Recent Calls</h3>
                 <div className="space-y-1">
-                    {callHistory?.length > 0 ? callHistory.map((call: any) => {
+                    {callHistory?.length > 0 ? callHistory.map((call: any, idx: number) => {
                         const isOutgoing = String(call.initiatedBy) === String(user?.id);
                         const isIncoming = !isOutgoing;
                         const isMissed = !call.durationSeconds || call.durationSeconds === 0;
-                        const isVideo = call.callType === 'video';
+                        const isVideo = call.callType === 'video' || call.hasVideo;
                         
-                        let peerName = call.callerName;
+                        let peerName = call.callerName || 'Unknown User';
                         let peerAvatar = call.callerAvatar;
+                        const peerId = isOutgoing ? (call.peerId || call.receiverId || call.to || call.partner_id) : call.initiatedBy;
 
                         if (isOutgoing) {
-                            const otherId = call.peerId || call.receiverId || call.to || call.partner_id;
-                            const knownUser = userMap[otherId] || Object.values(userMap).find((u: any) => u.username === call.peerUsername);
+                            const knownUser = userMap[peerId] || Object.values(userMap).find((u: any) => u.username === call.peerUsername);
                             if (knownUser) {
                                 peerName = knownUser.name || knownUser.username;
                                 peerAvatar = knownUser.avatar_url || knownUser.avatarUrl;
@@ -224,26 +228,43 @@ export const ChatSidebar = ({
                         const callTime = call.startedAt || call.created_at || new Date().toISOString();
                         
                         return (
-                            <div key={call.callId || Math.random()} onClick={() => handleCallLogClick && handleCallLogClick(call)} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl hover:bg-gray-50 dark:hover:bg-white/5 transition-all cursor-pointer border border-transparent group">
-                                <div className="w-10 h-10 rounded-[1rem] overflow-hidden bg-gray-200 dark:bg-[#2a2a2a] flex items-center justify-center text-sm font-bold text-gray-500 border border-gray-300 dark:border-[#343536] shrink-0">
-                                    {peerAvatar ? (
-                                        <img src={peerAvatar} alt="" className="w-full h-full object-cover"/>
-                                    ) : (
-                                        (peerName || 'U').charAt(0).toUpperCase()
-                                    )}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className={`text-[14px] font-bold truncate ${isMissed ? 'text-red-600 dark:text-red-500' : 'text-gray-900 dark:text-white'}`}>{peerName}</p>
-                                    <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-medium mt-0.5">
-                                        {isMissed ? <PhoneMissed size={12} className="text-red-500 shrink-0"/> : isIncoming ? <PhoneIncoming size={12} className="text-green-500 shrink-0"/> : <PhoneOutgoing size={12} className="text-blue-500 shrink-0"/>}
-                                        <span className="truncate">{formatTime(callTime)}</span>
-                                        <span className="mx-0.5">•</span>
-                                        <span className="shrink-0">Duration: {formatDuration(call.durationSeconds)}</span>
+                            <div key={call.callId || call.id || idx} className="flex items-center justify-between p-2 rounded-2xl hover:bg-gray-50 dark:hover:bg-white/5 transition-all cursor-pointer border border-transparent group">
+                                
+                                {/* FIX: Left Side - Open Chat */}
+                                <div 
+                                    className="flex items-center gap-3 flex-1 min-w-0"
+                                    onClick={() => handleCallLogClick && handleCallLogClick(call, 'chat')} 
+                                >
+                                    <div className="w-10 h-10 rounded-[1rem] overflow-hidden bg-gray-200 dark:bg-[#2a2a2a] flex items-center justify-center text-sm font-bold text-gray-500 border border-gray-300 dark:border-[#343536] shrink-0">
+                                        {peerAvatar ? (
+                                            <img src={peerAvatar} alt="" className="w-full h-full object-cover"/>
+                                        ) : (
+                                            (peerName || 'U').charAt(0).toUpperCase()
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className={`text-[14px] font-bold truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors ${isMissed ? 'text-red-600 dark:text-red-500' : 'text-gray-900 dark:text-white'}`}>{peerName}</p>
+                                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-medium mt-0.5">
+                                            {isMissed ? <PhoneMissed size={12} className="text-red-500 shrink-0"/> : isIncoming ? <PhoneIncoming size={12} className="text-green-500 shrink-0"/> : <PhoneOutgoing size={12} className="text-blue-500 shrink-0"/>}
+                                            <span className="truncate">{formatTime(callTime)}</span>
+                                            <span className="mx-0.5">•</span>
+                                            <span className="shrink-0">Duration: {formatDuration(call.durationSeconds)}</span>
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="p-2 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors shrink-0">
-                                    {isVideo ? <Video size={16} strokeWidth={2.5}/> : <Phone size={16} strokeWidth={2.5}/>}
-                                </div>
+
+                                {/* FIX: Right Side - Redial (Stops propagation so it doesn't open the chat) */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (handleCallLogClick) handleCallLogClick(call, isVideo ? 'video' : 'audio');
+                                    }}
+                                    className="p-2.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:text-blue-400 dark:hover:bg-blue-500/20 rounded-xl transition-all shrink-0 active:scale-90"
+                                    title={`Redial ${isVideo ? 'Video' : 'Voice'} Call`}
+                                >
+                                    {isVideo ? <Video size={18} strokeWidth={2.5}/> : <Phone size={18} strokeWidth={2.5}/>}
+                                </button>
+
                             </div>
                         )
                     }) : <div className="text-center text-xs font-bold text-gray-500 mt-4">No recent calls.</div>}

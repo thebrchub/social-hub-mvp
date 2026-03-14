@@ -1,173 +1,94 @@
-import { Search, Send, ArrowLeft, Smile, Check, CheckCheck, X, Loader2, MessageSquare, Reply, Clock, Phone, Video, Info, UserMinus, Ban, Flag, MicOff, Mic, VideoOff, UserPlus } from 'lucide-react';
+import { Search, Send, ArrowLeft, Smile, Check, CheckCheck, X, Loader2, MessageSquare, Reply, Clock, Phone, Video, Info, UserMinus, Ban, Flag, UserPlus } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useThemeStore } from '../../store/useThemeStore';
-import { useEffect, useRef, useState } from 'react'; 
+import { useRef, useState } from 'react'; 
 
 export const ChatWindow = ({ 
   activeRoom, selectedRoomId, setSelectedRoomId, messages, user, presence, typingData,
   isRequest, handleRequestAction, isFriend, 
   isMessagesLoading, isLoadingOlder, hasMoreMessages, fetchMessages, messagesEndRef,
   isSearchingMessages, setIsSearchingMessages, messageSearchQuery, setMessageSearchQuery, scrollToBottom, renderTextWithHighlights,
-  handleSendMessage, inputValue, handleInput, replyingTo, setReplyingTo, showEmojiPicker, setShowEmojiPicker, onEmojiClick,
+  handleSendMessage, showToast, // <--- PROPERLY DESTRUCTURED
+  inputValue, handleInput, replyingTo, setReplyingTo, showEmojiPicker, setShowEmojiPicker, onEmojiClick,
   formatTime, formatLastSeen,
-  showInfoPanel, setShowInfoPanel, onStartCall, onPanelAction,
-  activeCall, endActiveCall, remoteVideoRef, localVideoRef, callMicOff, setCallMicOff, callCamOff, setCallCamOff, localStreamRef
+  showInfoPanel, setShowInfoPanel, onPanelAction,
 }: any) => {
 
   const { theme } = useThemeStore();
-  const isCallActiveInThisRoom = activeCall && (activeCall.roomId === selectedRoomId || activeCall.peerId === activeRoom?.partner_id);
-
-  const startCallAndClosePanel = (type: 'audio' | 'video', isGroup: boolean) => {
-      setShowInfoPanel(false);
-      if (onStartCall) onStartCall(type, isGroup);
-  };
-
   const roomAvatar = activeRoom?.avatar_url || activeRoom?.avatarUrl;
 
-  const avatarRingRef = useRef<HTMLDivElement>(null);
-  const requestRef = useRef<number | null>(null);
-
-  const [callDuration, setCallDuration] = useState(0);
+  // FIX: Centralized call handler using Custom Events (survives refreshes/navigation)
+  const triggerCall = (type: 'audio' | 'video') => {
+      setShowInfoPanel(false);
+      
+      // If partner_id is missing, calls will fail. Logic in Chats.tsx now ensures this is set.
+      if (!selectedRoomId || !activeRoom?.partner_id) {
+          if (showToast) showToast("Error: Missing Partner ID", "error");
+          console.error("Cannot start call: Missing Room ID or Partner ID", { selectedRoomId, partnerId: activeRoom?.partner_id });
+          return;
+      }
+      
+      console.log(`🚀 Dispatching START_CALL for ${activeRoom.partner_id}`);
+      
+      // Dispatch custom event to the GlobalCallFloater!
+      window.dispatchEvent(new CustomEvent('START_CALL', {
+          detail: { 
+              roomId: selectedRoomId, 
+              peerId: activeRoom.partner_id, 
+              type, 
+              peerName: activeRoom.name || 'User', 
+              peerAvatar: roomAvatar 
+          }
+      }));
+  };
 
   const [swipingMsgId, setSwipingMsgId] = useState<string | null>(null);
   const swipeStartX = useRef<number | null>(null);
   const swipeCurrentX = useRef<number | null>(null);
 
-  useEffect(() => {
-      let interval: any;
-      if (activeCall?.isAccepted) {
-          interval = setInterval(() => {
-              setCallDuration(prev => prev + 1);
-          }, 1000);
-      } else {
-          setCallDuration(0);
-      }
-      return () => clearInterval(interval);
-  }, [activeCall?.isAccepted]);
-
-  const formatCallDuration = (seconds: number) => {
-      const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-      const s = (seconds % 60).toString().padStart(2, '0');
-      return `${m}:${s}`;
-  };
-
-  useEffect(() => {
-    if (!isCallActiveInThisRoom || !activeCall?.isAccepted || activeCall.isVideo) return;
-
-    const timer = setTimeout(() => {
-      const stream = remoteVideoRef.current?.srcObject as MediaStream;
-      if (!stream || stream.getAudioTracks().length === 0) return;
-
-      try {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(analyser);
-
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-        const updateLevel = () => {
-          analyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i];
-          }
-          const average = sum / dataArray.length;
-
-          if (avatarRingRef.current) {
-            const scale = 1 + (average / 255) * 0.5; 
-            const glowOpacity = Math.min(0.8, average / 100);
-            
-            avatarRingRef.current.style.transform = `scale(${scale})`;
-            avatarRingRef.current.style.boxShadow = `0 0 ${average}px rgba(34, 197, 94, ${glowOpacity})`;
-            avatarRingRef.current.style.opacity = `${0.3 + glowOpacity}`;
-          }
-          requestRef.current = requestAnimationFrame(updateLevel);
-        };
-
-        updateLevel();
-
-        return () => {
-          if (requestRef.current) cancelAnimationFrame(requestRef.current);
-          audioContext.close().catch(() => {});
-        };
-      } catch (e) {
-        console.error("Audio Context Error:", e);
-      }
-    }, 1000); 
-
-    return () => clearTimeout(timer);
-  }, [isCallActiveInThisRoom, activeCall?.isAccepted, activeCall?.isVideo]);
-
   const scrollToRepliedMessage = (targetMsgId: string) => {
       const targetElement = document.getElementById(`msg-${targetMsgId}`);
       if (targetElement) {
           targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          
           targetElement.classList.add('bg-blue-500/20', 'transition-colors', 'duration-500', 'rounded-xl');
-          setTimeout(() => {
-              targetElement.classList.remove('bg-blue-500/20');
-          }, 1500);
+          setTimeout(() => targetElement.classList.remove('bg-blue-500/20'), 1500);
       }
   };
 
-  // FIX: Removed unused 'msgId' from start handler
-  const handleTouchStart = (e: React.TouchEvent) => {
-      swipeStartX.current = e.touches[0].clientX;
-  };
+  const handleTouchStart = (e: React.TouchEvent) => { swipeStartX.current = e.touches[0].clientX; };
 
-  // Keep msgId here since we DO use it to update the DOM
   const handleTouchMove = (e: React.TouchEvent, msgId: string) => {
       if (swipeStartX.current === null) return;
-      const currentX = e.touches[0].clientX;
-      const diff = currentX - swipeStartX.current;
-
+      const diff = e.touches[0].clientX - swipeStartX.current;
       if (diff > 0 && diff < 100) { 
           setSwipingMsgId(msgId);
           swipeCurrentX.current = diff;
-          const element = document.getElementById(`msg-bubble-${msgId}`);
-          if (element) element.style.transform = `translateX(${diff}px)`;
+          const el = document.getElementById(`msg-bubble-${msgId}`);
+          if (el) el.style.transform = `translateX(${diff}px)`;
       }
   };
 
- // FIX: Removed unused 'e' parameter
   const handleTouchEnd = (msg: any, msgId: string) => {
-      if (swipeCurrentX.current && swipeCurrentX.current > 50) {
-          setReplyingTo(msg);
+      if (swipeCurrentX.current && swipeCurrentX.current > 50) setReplyingTo(msg);
+      const el = document.getElementById(`msg-bubble-${msgId}`);
+      if (el) {
+          el.style.transition = 'transform 0.2s ease-out';
+          el.style.transform = 'translateX(0px)';
+          setTimeout(() => el.style.transition = '', 200);
       }
-      
-      const element = document.getElementById(`msg-bubble-${msgId}`);
-      if (element) {
-          element.style.transition = 'transform 0.2s ease-out';
-          element.style.transform = 'translateX(0px)';
-          setTimeout(() => { element.style.transition = ''; }, 200);
-      }
-      
-      swipeStartX.current = null;
-      swipeCurrentX.current = null;
-      setSwipingMsgId(null);
+      swipeStartX.current = null; swipeCurrentX.current = null; setSwipingMsgId(null);
   };
 
-  // Helper to extract clean text for the little box right above the input field
   const getCleanReplyPreviewText = () => {
      if (!replyingTo) return "";
      const rawText = replyingTo.text || replyingTo.content || "";
-     if (rawText.startsWith('> ')) {
-         const parts = rawText.split('\n\n');
-         return parts.slice(1).join('\n\n') || "Reply";
-     }
-     return rawText;
+     return rawText.startsWith('> ') ? (rawText.split('\n\n').slice(1).join('\n\n') || "Reply") : rawText;
   };
-
 
   return (
     <div className={`flex-1 flex bg-white dark:bg-[#030303] relative min-w-0 transition-colors duration-300 ${!selectedRoomId ? 'hidden md:flex' : 'flex'}`}>
       
-      {showInfoPanel && (
-         <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setShowInfoPanel(false)} />
-      )}
+      {showInfoPanel && <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setShowInfoPanel(false)} />}
 
       {selectedRoomId && activeRoom ? (
         <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
@@ -179,11 +100,7 @@ export const ChatWindow = ({
                 </button>
                 
                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-gray-500 dark:text-gray-200 font-extrabold shrink-0 border border-gray-200 dark:border-[#272729] bg-gray-100 dark:bg-gray-800 overflow-hidden shadow-sm group-hover:border-blue-400 transition-colors">
-                   {roomAvatar ? (
-                       <img src={roomAvatar} alt={activeRoom.name} className="w-full h-full object-cover" />
-                   ) : (
-                       activeRoom.name?.charAt(0).toUpperCase() || 'U'
-                   )}
+                   {roomAvatar ? <img src={roomAvatar} alt={activeRoom.name} className="w-full h-full object-cover" /> : (activeRoom.name?.charAt(0).toUpperCase() || 'U')}
                 </div>
 
                 <div className="min-w-0 flex flex-col justify-center">
@@ -206,8 +123,8 @@ export const ChatWindow = ({
              <div className="flex items-center gap-1 sm:gap-2 text-gray-400 dark:text-gray-500 shrink-0 z-50">
                 {!isRequest && (
                     <>
-                        <button onClick={() => onStartCall('audio', false)} disabled={!!activeCall} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/5 hover:text-blue-600 dark:hover:text-white transition-colors disabled:opacity-50" title="Voice Call"><Phone size={18} strokeWidth={2.5} /></button>
-                        <button onClick={() => onStartCall('video', false)} disabled={!!activeCall} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/5 hover:text-blue-600 dark:hover:text-white transition-colors disabled:opacity-50" title="Video Call"><Video size={20} strokeWidth={2.5} /></button>
+                        <button onClick={() => triggerCall('audio')} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/5 hover:text-blue-600 dark:hover:text-white transition-colors" title="Voice Call"><Phone size={18} strokeWidth={2.5} /></button>
+                        <button onClick={() => triggerCall('video')} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/5 hover:text-blue-600 dark:hover:text-white transition-colors" title="Video Call"><Video size={20} strokeWidth={2.5} /></button>
                         <div className="w-[2px] h-5 bg-gray-200 dark:bg-[#272729] mx-1 md:mx-1.5 rounded-full"></div>
                     </>
                 )}
@@ -253,7 +170,6 @@ export const ChatWindow = ({
                           );
                         }
                         
-                        // FIX: Strict Parsing to hide the `>` and `[id:...]` payload strings completely
                         const isReply = rawText.startsWith('> ');
                         let repliedMsgId = null;
                         let cleanQuoteText = '';
@@ -263,15 +179,9 @@ export const ChatWindow = ({
                             const parts = rawText.split('\n\n');
                             const firstPart = parts[0];
                             actualText = parts.slice(1).join('\n\n') || '';
-
-                            // Extract the ID and the quote text cleanly
                             const idMatch = firstPart.match(/^>\s*\[id:(.+?)\]\s*(.*)$/);
-                            if (idMatch) {
-                                repliedMsgId = idMatch[1];
-                                cleanQuoteText = idMatch[2];
-                            } else {
-                                cleanQuoteText = firstPart.substring(2);
-                            }
+                            if (idMatch) { repliedMsgId = idMatch[1]; cleanQuoteText = idMatch[2]; } 
+                            else { cleanQuoteText = firstPart.substring(2); }
                         }
 
                         return (
@@ -284,7 +194,6 @@ export const ChatWindow = ({
                               onTouchMove={(e) => handleTouchMove(e, msgId)}
                               onTouchEnd={() => handleTouchEnd(msg, msgId)}
                           >
-                             
                              <div className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 dark:bg-[#1a1a1a] text-gray-500 transition-opacity duration-200 ${swipingMsgId === msgId && (swipeCurrentX.current || 0) > 40 ? 'opacity-100' : 'opacity-0'} ${isMe ? 'right-full mr-2' : 'left-full ml-2'}`}>
                                  <Reply size={16} className="-scale-x-100"/>
                              </div>
@@ -292,16 +201,11 @@ export const ChatWindow = ({
                              <div 
                                  id={`msg-bubble-${msgId}`}
                                  className={`max-w-[85%] md:max-w-[70%] px-3.5 py-2 md:px-4 md:py-2.5 rounded-2xl text-[14px] md:text-[15px] font-medium leading-snug shadow-sm flex flex-col transition-colors relative z-10 ${
-                                   isMe 
-                                   ? 'bg-blue-600 text-white rounded-br-none shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)]' 
-                                   : 'bg-gray-100 dark:bg-[#1a1a1a] text-gray-900 dark:text-gray-200 border border-gray-200 dark:border-[#272729] rounded-bl-none'
+                                   isMe ? 'bg-blue-600 text-white rounded-br-none shadow-[inset_0_2px_4px_rgba(255,255,255,0.2)]' : 'bg-gray-100 dark:bg-[#1a1a1a] text-gray-900 dark:text-gray-200 border border-gray-200 dark:border-[#272729] rounded-bl-none'
                                  }`}
                              >
                                 {isReply && (
-                                  <div 
-                                      onClick={() => scrollToRepliedMessage(repliedMsgId || '')}
-                                      className={`border-l-4 mb-2 text-xs opacity-90 cursor-pointer hover:opacity-100 transition-opacity ${isMe ? 'border-blue-300 bg-black/10 text-white' : 'border-blue-500 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 shadow-inner'} p-2 rounded-lg`}
-                                  >
+                                  <div onClick={() => scrollToRepliedMessage(repliedMsgId || '')} className={`border-l-4 mb-2 text-xs opacity-90 cursor-pointer hover:opacity-100 transition-opacity ${isMe ? 'border-blue-300 bg-black/10 text-white' : 'border-blue-500 bg-white dark:bg-black/20 text-gray-700 dark:text-gray-300 shadow-inner'} p-2 rounded-lg`}>
                                     <p className="font-extrabold text-[10px] mb-0.5 opacity-80 uppercase tracking-wider">{isMe ? 'You replied' : 'Replied'}</p>
                                     <p className="line-clamp-2">{renderTextWithHighlights(cleanQuoteText)}</p>
                                   </div>
@@ -376,64 +280,6 @@ export const ChatWindow = ({
              )}
           </div>
 
-          {isCallActiveInThisRoom && (
-            <div className="absolute inset-0 z-[100] bg-gray-50 dark:bg-[#030303] flex flex-col animate-in fade-in duration-300 overflow-hidden rounded-t-3xl md:rounded-none shadow-[0_-20px_50px_rgba(0,0,0,0.2)] md:shadow-none">
-                {activeCall.isVideo ? (
-                   <>
-                      <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                      <div className="absolute bottom-28 md:bottom-32 right-6 w-32 h-48 md:w-40 md:h-56 bg-gray-200 dark:bg-[#111] rounded-2xl overflow-hidden border-2 border-white/50 dark:border-white/20 shadow-2xl z-20">
-                         <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] transition-opacity ${callCamOff ? 'opacity-0' : 'opacity-100'}`} />
-                         {callCamOff && <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-900"><VideoOff size={32} className="text-gray-500"/></div>}
-                      </div>
-                   </>
-                ) : (
-                   <div className="w-full h-full flex flex-col items-center justify-center relative pb-20">
-                      <div className="relative mb-8 flex items-center justify-center">
-                         {activeCall.isAccepted && (
-                             <div ref={avatarRingRef} className="absolute inset-0 rounded-full bg-green-500/20 transition-transform origin-center" style={{ zIndex: 0 }} />
-                         )}
-                         <div className={`w-32 h-32 md:w-48 md:h-48 rounded-full flex items-center justify-center overflow-hidden transition-all duration-500 border-4 shadow-2xl relative z-10 ${activeCall.isAccepted ? 'bg-green-100 dark:bg-green-900/20 border-green-500/50' : 'bg-blue-100 dark:bg-blue-900/20 border-blue-500/30 shadow-[0_0_60px_rgba(59,130,246,0.3)] animate-pulse'}`}>
-                            {roomAvatar ? (
-                                <img src={roomAvatar} alt="Call Partner" className="w-full h-full object-cover" />
-                            ) : (
-                                <span className={`text-5xl md:text-7xl font-bold ${activeCall.isAccepted ? 'text-green-600 dark:text-green-500' : 'text-blue-600 dark:text-blue-500'}`}>{activeCall.peerName?.charAt(0).toUpperCase()}</span>
-                            )}
-                         </div>
-                      </div>
-                      <h2 className="text-2xl md:text-3xl font-extrabold text-gray-900 dark:text-white mb-2">{activeCall.peerName}</h2>
-                      <p className={`text-xs md:text-sm font-extrabold uppercase tracking-widest ${activeCall.isAccepted ? 'text-green-600 dark:text-green-400' : 'text-blue-600 dark:text-blue-400 animate-pulse'}`}>
-                         {activeCall.isAccepted ? formatCallDuration(callDuration) : 'Calling...'}
-                      </p>
-                      
-                      <video ref={remoteVideoRef} autoPlay playsInline className="absolute w-0 h-0 opacity-0 pointer-events-none" />
-                      <video ref={localVideoRef} autoPlay playsInline muted className="absolute w-0 h-0 opacity-0 pointer-events-none" />
-                   </div>
-                )}
-
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-100/90 via-gray-50/50 dark:from-black/90 dark:via-black/50 to-transparent flex items-end justify-center pb-8 gap-5 z-30 pt-32 pointer-events-none">
-                   <button onClick={() => {
-                      setCallMicOff(!callMicOff);
-                      if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach((t: any) => t.enabled = callMicOff);
-                   }} className={`pointer-events-auto w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all shadow-lg ${callMicOff ? 'bg-gray-800 dark:bg-white text-white dark:text-black shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]' : 'bg-white/80 hover:bg-gray-100 dark:bg-black/60 dark:hover:bg-black/80 backdrop-blur-sm text-gray-800 dark:text-white border border-gray-300 dark:border-white/10'}`}>
-                      {callMicOff ? <MicOff size={24} strokeWidth={2.5} /> : <Mic size={24} strokeWidth={2.5} />}
-                   </button>
-                   
-                   {activeCall.isVideo && (
-                     <button onClick={() => {
-                        setCallCamOff(!callCamOff);
-                        if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach((t: any) => t.enabled = callCamOff);
-                     }} className={`pointer-events-auto w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all shadow-lg ${callCamOff ? 'bg-gray-800 dark:bg-white text-white dark:text-black shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]' : 'bg-white/80 hover:bg-gray-100 dark:bg-black/60 dark:hover:bg-black/80 backdrop-blur-sm text-gray-800 dark:text-white border border-gray-300 dark:border-white/10'}`}>
-                        {callCamOff ? <VideoOff size={24} strokeWidth={2.5} /> : <Video size={24} strokeWidth={2.5} />}
-                     </button>
-                   )}
-
-                   <button onClick={endActiveCall} className="pointer-events-auto w-16 h-16 md:w-20 md:h-20 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4),_0_0_20px_rgba(220,38,38,0.5)] transition-transform active:scale-95">
-                      <Phone size={28} className="rotate-[135deg]" strokeWidth={3} />
-                   </button>
-                </div>
-            </div>
-          )}
-
         </div>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-6 w-full h-full bg-gray-50 dark:bg-[#030303] transition-colors">
@@ -457,21 +303,17 @@ export const ChatWindow = ({
          <div className="flex-1 overflow-y-auto scrollbar-hide">
              <div className="p-6 flex flex-col items-center text-center border-b border-gray-200 dark:border-[#272729] bg-white dark:bg-transparent transition-colors">
                 <div className="w-24 h-24 rounded-full flex items-center justify-center text-4xl font-extrabold mb-4 shadow-lg border-4 border-gray-50 dark:border-[#272729] bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-200 overflow-hidden">
-                   {roomAvatar ? (
-                       <img src={roomAvatar} alt={activeRoom?.name} className="w-full h-full object-cover" />
-                   ) : (
-                       activeRoom?.name?.charAt(0).toUpperCase() || 'U'
-                   )}
+                   {roomAvatar ? <img src={roomAvatar} alt={activeRoom?.name} className="w-full h-full object-cover" /> : (activeRoom?.name?.charAt(0).toUpperCase() || 'U')}
                 </div>
                 <h3 className="text-xl font-extrabold text-gray-900 dark:text-white mb-1 transition-colors">{activeRoom?.name || `User_${selectedRoomId?.substring(0,4)}`}</h3>
                 <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-6">@{activeRoom?.friend_username}</p>
                 
                 <div className="flex gap-3 w-full justify-center">
-                   <button onClick={() => startCallAndClosePanel('audio', false)} disabled={!!activeCall} className="flex flex-col items-center gap-1.5 group disabled:opacity-50">
+                   <button onClick={() => triggerCall('audio')} className="flex flex-col items-center gap-1.5 group">
                       <div className="w-12 h-12 rounded-2xl bg-blue-50 hover:bg-blue-100 dark:bg-white/5 dark:hover:bg-white/10 flex items-center justify-center text-blue-600 dark:text-blue-400 transition-all shadow-sm border border-blue-100 dark:border-transparent group-hover:-translate-y-1"><Phone size={20} strokeWidth={2.5}/></div>
                       <span className="text-[10px] font-extrabold uppercase tracking-widest text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">Audio</span>
                    </button>
-                   <button onClick={() => startCallAndClosePanel('video', false)} disabled={!!activeCall} className="flex flex-col items-center gap-1.5 group disabled:opacity-50">
+                   <button onClick={() => triggerCall('video')} className="flex flex-col items-center gap-1.5 group">
                       <div className="w-12 h-12 rounded-2xl bg-blue-50 hover:bg-blue-100 dark:bg-white/5 dark:hover:bg-white/10 flex items-center justify-center text-blue-600 dark:text-blue-400 transition-all shadow-sm border border-blue-100 dark:border-transparent group-hover:-translate-y-1"><Video size={20} strokeWidth={2.5}/></div>
                       <span className="text-[10px] font-extrabold uppercase tracking-widest text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">Video</span>
                    </button>

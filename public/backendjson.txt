@@ -3,7 +3,7 @@
     "swagger": "2.0",
     "info": {
         "description": "Real-time chat, matchmaking, and group calling API. Uses REST for actions and WebSocket (/ws) for real-time events.",
-        "title": "Aarpaar API",
+        "title": "zquab API",
         "contact": {},
         "version": "1.0"
     },

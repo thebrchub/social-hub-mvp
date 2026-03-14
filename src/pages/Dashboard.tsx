@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
-import { MessageSquare, Users, Loader2, FlaskConical, ArrowRight, Video } from 'lucide-react';
+import { MessageSquare, Users, Loader2, FlaskConical, ArrowRight, Video, TrendingUp, Flame } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
@@ -19,7 +19,6 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchDashboardStats = async () => {
       try {
-        // FIX: Fetch both rooms AND actual friends concurrently for accurate stats
         const [roomsRes, friendsRes] = await Promise.all([
             api.get('/rooms').catch(() => ({ data: [] })),
             api.get('/friends').catch(() => ({ data: [] }))
@@ -29,8 +28,8 @@ const Dashboard = () => {
         const friendsList = Array.isArray(friendsRes) ? friendsRes : friendsRes?.data || [];
 
         setStats({
-          friends: friendsList.length, // True friend count!
-          messages: roomsList.length   // True active chats count!
+          friends: friendsList.length, 
+          messages: roomsList.length   
         });
       } catch (error) {
         console.error("Failed to load dashboard stats", error);
@@ -53,7 +52,7 @@ const Dashboard = () => {
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 scrollbar-hide bg-gray-50 dark:bg-[#030303] transition-colors duration-300">
         
         {/* Welcome Banner - Lift & Shadow Effect */}
-        <div className="w-full bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-2xl p-6 sm:p-8 lg:p-10 mb-8 relative overflow-hidden group shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+        <div className="w-full bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-2xl p-6 sm:p-8 lg:p-10 mb-6 relative overflow-hidden group shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-8">
             
             {/* Left Side: Greeting & Text */}
@@ -72,7 +71,7 @@ const Dashboard = () => {
             {/* Right Side: Action Circles */}
             <div className="flex items-center gap-6 sm:gap-8 md:pr-6 lg:pr-12">
               
-              {/* Text Match Circle - 3D Bulged Effect */}
+              {/* Text Match Circle */}
               <div 
                 onClick={() => navigate('/matches')}
                 className="flex flex-col items-center gap-3 cursor-pointer group/text"
@@ -85,7 +84,7 @@ const Dashboard = () => {
                 </span>
               </div>
 
-              {/* Video Match Circle - 3D Bulged Effect */}
+              {/* Video Match Circle */}
               <div 
                 onClick={() => navigate('/vid-matches')}
                 className="flex flex-col items-center gap-3 cursor-pointer group/video"
@@ -103,6 +102,41 @@ const Dashboard = () => {
           </div>
           
           <div className="absolute right-[-10%] bottom-[-20%] w-64 h-64 sm:w-96 sm:h-96 bg-blue-400/20 dark:bg-blue-600/10 blur-[100px] rounded-full group-hover:bg-purple-400/20 dark:group-hover:bg-purple-600/10 transition-colors duration-1000 pointer-events-none"></div>
+        </div>
+
+        {/* --- NEW: THE ARENA PROMO BANNER --- */}
+        <div 
+           onClick={() => navigate('/feeds')}
+           className="w-full bg-gradient-to-r from-orange-500 to-red-600 dark:from-orange-600 dark:to-red-900 rounded-2xl p-6 sm:p-8 mb-8 relative overflow-hidden cursor-pointer group shadow-[0_10px_30px_-10px_rgba(249,115,22,0.4)] hover:shadow-[0_15px_40px_-10px_rgba(249,115,22,0.6)] hover:-translate-y-1 transition-all duration-300 flex items-center justify-between"
+        >
+           {/* Background animated elements */}
+           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 blur-[50px] rounded-full pointer-events-none group-hover:scale-150 transition-transform duration-700"></div>
+           <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-black/10 blur-[40px] rounded-full pointer-events-none"></div>
+           
+           <div className="relative z-10 flex items-center gap-5 sm:gap-6">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/30 shadow-inner shrink-0 group-hover:scale-110 transition-transform duration-300">
+                  <TrendingUp className="text-white w-7 h-7 sm:w-8 sm:h-8" strokeWidth={2.5} />
+              </div>
+              <div>
+                  <div className="flex items-center gap-2 mb-1">
+                      <Flame size={16} className="text-yellow-300 animate-pulse" />
+                      <span className="text-[10px] sm:text-xs font-extrabold text-yellow-300 uppercase tracking-widest">Global Pulse</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-display font-extrabold text-white leading-tight">Enter The Arena</h2>
+                  <p className="text-white/80 text-sm font-medium mt-1 hidden sm:block">Join the conversation. Share your sparks, build your legacy.</p>
+              </div>
+           </div>
+
+           <div className="relative z-10 hidden md:flex items-center gap-3">
+               <div className="flex -space-x-3">
+                  <img className="w-10 h-10 rounded-full border-2 border-red-600 object-cover" src="https://ui-avatars.com/api/?name=Alex&background=fff" alt="User" />
+                  <img className="w-10 h-10 rounded-full border-2 border-red-600 object-cover" src="https://ui-avatars.com/api/?name=Sam&background=000" alt="User" />
+                  <img className="w-10 h-10 rounded-full border-2 border-red-600 object-cover" src="https://ui-avatars.com/api/?name=Dev&background=random" alt="User" />
+               </div>
+               <div className="bg-white/20 backdrop-blur-md p-3 rounded-full border border-white/30 group-hover:bg-white group-hover:text-red-600 text-white transition-colors duration-300 ml-4">
+                  <ArrowRight size={20} strokeWidth={3} />
+               </div>
+           </div>
         </div>
 
         {/* Quick Stats Grid */}

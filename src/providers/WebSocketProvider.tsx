@@ -1,24 +1,6 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
-
-interface WebSocketContextType {
-  isConnected: boolean;
-  sendMessage: (roomId: string, text: string, tempId?: string) => void;
-  sendTypingStart: (roomId: string) => void;
-  markRead: (roomId: string) => void;
-  markDelivered: (roomId: string) => void;
-  lastMessage: any | null; 
-  subscribe: (callback: (msg: any) => void) => () => void;
-  sendRaw: (payload: any) => void; 
-}
-
-const WebSocketContext = createContext<WebSocketContextType | null>(null);
-
-export const useWebSocket = () => {
-  const context = useContext(WebSocketContext);
-  if (!context) throw new Error("useWebSocket must be used within a WebSocketProvider");
-  return context;
-};
+import { WebSocketContext } from './WebSocketContext';
 
 export const WebSocketProvider = ({ children }: { children: React.ReactNode }) => {
   const user = useAuthStore(state => state.user);
@@ -28,82 +10,89 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
   const [lastMessage, setLastMessage] = useState<any>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
-  
   const reconnectTimeoutRef = useRef<any>(null);
-
   const listeners = useRef<Set<Function>>(new Set());
+
   const subscribe = (callback: Function) => {
     listeners.current.add(callback);
     return () => listeners.current.delete(callback);
   };
 
   const connect = () => {
-    const token = localStorage.getItem('aarpaar_access_token');
-    if (!token) return;
+    const token = localStorage.getItem('zquab_access_token');
+    
+    if (!token) {
+        setIsConnected(false);
+        return;
+    }
 
-    const wsUrl = `wss://aarpaar-api.brchub.me/ws?token=${encodeURIComponent(token)}`;
+    // FIX 1: SINGLETON CHECK
+    // If we are already connecting or open, DO NOT start a new one!
+    // This stops the "Double Connection" race condition after refresh.
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.CONNECTING || wsRef.current.readyState === WebSocket.OPEN) {
+        console.log("⏳ Connection already in progress, skipping redundant connect.");
+        return;
+      }
+    }
+
+    const wsUrl = `wss://api.zquab.com/ws?token=${encodeURIComponent(token)}`;
+    console.log("🚀 Attempting unique connection...");
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("[WS] Connected to Aarpaar Backend!");
+      console.log("✅ WebSocket Connected!");
       setIsConnected(true);
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
 
     ws.onmessage = (event) => {
       try {
-        // FIX: Split by newline in case the backend batches multiple JSON objects in one frame
         const stringPayloads = typeof event.data === 'string' ? event.data.split('\n') : [event.data];
-
         stringPayloads.forEach(payloadStr => {
-           if (!payloadStr.trim()) return; // Skip empty lines
-           
+           if (!payloadStr.trim()) return; 
            try {
              let parsed = JSON.parse(payloadStr);
              if (parsed.type === 'private' && parsed.data) parsed = parsed.data;
-             
-             console.log("[WS IN]", parsed);
              setLastMessage(parsed); 
-             
              listeners.current.forEach(cb => cb(parsed));
-           } catch (parseErr) {
-             console.error("[WS] Failed to parse individual message chunk:", payloadStr, parseErr);
-           }
+           } catch (parseErr) {}
         });
-
-      } catch (err) {
-        console.error("Failed to process WS message block", err);
-      }
+      } catch (err) {}
     };
 
-    ws.onclose = (event) => {
-      console.log(`[WS] Disconnected (code=${event.code})`);
+    ws.onclose = (e) => {
+      console.log("❌ WebSocket Closed:", e.code);
       setIsConnected(false);
-      wsRef.current = null;
       
-      if (isAuthenticated) {
-        console.log("[WS] Attempting reconnect in 3s...");
+      // FIX 2: Ref-Safe Cleanup
+      // Only clear the ref if the socket that closed is the one we are currently tracking
+      if (wsRef.current === ws) {
+          wsRef.current = null;
+      }
+
+      // Reconnect if not a clean logout
+      if (isAuthenticated && e.code !== 1000) {
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = setTimeout(connect, 3000);
       }
     };
-
-    ws.onerror = (error) => {
-      console.error("[WS] Error", error);
+    
+    ws.onerror = (err) => {
+        console.error("🔥 WebSocket Error Details:", err);
     };
   };
 
   const disconnect = () => {
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     if (wsRef.current) {
-      wsRef.current.onopen = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onerror = null;
-      wsRef.current.onclose = null;
-      
-      wsRef.current.close();
+      // 1000 is a normal closure
+      wsRef.current.close(1000);
       wsRef.current = null;
     }
+    setIsConnected(false);
   };
 
   useEffect(() => {
@@ -112,58 +101,63 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     } else {
       disconnect();
     }
-    return () => disconnect();
+    // Standard cleanup on unmount
+    return () => {
+        // We don't call disconnect() here to prevent Vite HMR from 
+        // killing the socket during simple code edits
+    };
   }, [isAuthenticated, user?.username]);
 
+  // Keep-alive heartbeat
+  useEffect(() => {
+      if (!isConnected) return;
+      const interval = setInterval(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'ping' }));
+          }
+      }, 30000);
+      return () => clearInterval(interval);
+  }, [isConnected]);
 
+  // WRAPPER METHODS
   const sendMessage = (roomId: string, text: string, tempId?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    const payload = {
-      type: 'send_message',
-      roomId,
-      text,
-      tempId: tempId || `tmp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
-    };
-    console.log("[WS OUT (CHAT)]", payload);
-    wsRef.current.send(JSON.stringify(payload));
+    // Explicitly using snake_case as per backend requirements
+    wsRef.current.send(JSON.stringify({ 
+        type: 'send_message', 
+        room_id: roomId, 
+        text: text, 
+        temp_id: tempId || `tmp_${Date.now()}` 
+    }));
+  };
+  
+  const sendRaw = (payload: any) => { 
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(typeof payload === 'string' ? payload : JSON.stringify(payload)); 
+      }
   };
 
-  const sendRaw = (payload: any) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn("[WS OUT] Cannot send raw payload, websocket is not open.");
-      return;
+  // WRAPPER METHODS - Strictly using 'roomId' as per backend specs
+  const sendTypingStart = (roomId: string) => { 
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'typing_start', roomId: roomId })); 
     }
-    const dataString = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    console.log("[WS OUT (RAW)]", payload);
-    wsRef.current.send(dataString);
   };
 
-  const sendTypingStart = (roomId: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'typing_start', roomId }));
+  const markRead = (roomId: string) => { 
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'mark_read', roomId: roomId })); 
+    }
   };
 
-  const markRead = (roomId: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'mark_read', roomId }));
+  const markDelivered = (roomId: string) => { 
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'mark_delivered', roomId: roomId })); 
+    }
   };
-
-  const markDelivered = (roomId: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'mark_delivered', roomId }));
-  };
-
+  
   return (
-    <WebSocketContext.Provider value={{
-      isConnected,
-      sendMessage,
-      sendTypingStart,
-      markRead,
-      markDelivered,
-      lastMessage,
-      subscribe,
-      sendRaw 
-    }}>
+    <WebSocketContext.Provider value={{ isConnected, sendMessage, sendTypingStart, markRead, markDelivered, lastMessage, subscribe, sendRaw }}>
       {children}
     </WebSocketContext.Provider>
   );

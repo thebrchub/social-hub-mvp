@@ -1,10 +1,10 @@
 // src/services/api.ts
 
-const API_BASE_URL = "https://aarpaar-api.brchub.me/api/v1";
+const API_BASE_URL = "https://api.zquab.com/api/v1";
 
 // Helper to auto-inject the token into headers
 const getHeaders = () => {
-  const token = localStorage.getItem('aarpaar_access_token');
+  const token = localStorage.getItem('zquab_access_token');
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),

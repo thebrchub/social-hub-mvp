@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type NotificationType = 'DM_REQ' | 'MESSAGE' | 'SYSTEM' | 'FRIEND_REQ';
+export type NotificationType = 'DM_REQ' | 'MESSAGE' | 'SYSTEM' | 'FRIEND_REQ'| 'GROUP_INVITE';
 
 export interface Notification {
   id: string;

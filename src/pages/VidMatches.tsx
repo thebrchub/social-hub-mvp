@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare, MessageSquareOff, X, Columns, Rows, Smile, Ban, CheckCircle2 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
-import { useWebSocket } from '../providers/WebSocketProvider';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore } from '../store/useThemeStore';
 import Modal from '../components/Modal';
+
 
 type MatchState = 'welcome' | 'searching' | 'matched';
 type ModalType = 'NONE' | 'REPORT' | 'BLOCK' | 'FRIEND_SUCCESS' | 'LEAVE_WARNING';

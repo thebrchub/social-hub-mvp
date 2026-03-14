@@ -3,9 +3,10 @@ import DashboardLayout from '../layouts/DashboardLayout';
 import { Send, UserPlus, XCircle, RefreshCw, Zap, Smile, Ban, Flag, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { api } from '../services/api';
-import { useWebSocket } from '../providers/WebSocketProvider';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { WebSocketContext } from '../providers/WebSocketContext';
 
 interface Partner {
   name: string;

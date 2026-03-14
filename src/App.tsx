@@ -15,7 +15,9 @@ import { WebSocketProvider } from './providers/WebSocketProvider';
 import Friends from './pages/Friends';
 import VidMatches from './pages/VidMatches';
 import Labs from './pages/Labs';
+import JoinGroup from './pages/JoinGroup';
 import Donations from './pages/Donations';
+import Feeds from './pages/Feeds';
 
 
 // Helper Component to Protect Routes
@@ -65,6 +67,8 @@ function App() {
           path="/onboarding" 
           element={isAuthenticated && needsOnboarding ? <Onboarding /> : <Navigate to="/dashboard" replace />} 
         />
+
+        <Route path="/j/:code" element={<JoinGroup />} />
 
         {/* --- PROTECTED APP ROUTES --- */}
         <Route 
@@ -122,6 +126,8 @@ function App() {
             </ProtectedRoute>
           } 
         />
+
+        <Route path="/feeds" element={<Feeds />} />
 
         <Route 
           path="/live" 

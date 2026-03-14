@@ -42,9 +42,9 @@ const Login = () => {
       const { access_token, refresh_token } = authData;
 
       // 2. Save tokens securely in localStorage
-      localStorage.setItem('aarpaar_access_token', access_token);
+      localStorage.setItem('zquab_access_token', access_token);
       if (refresh_token) {
-        localStorage.setItem('aarpaar_refresh_token', refresh_token);
+        localStorage.setItem('zquab_refresh_token', refresh_token);
       }
 
       // 3. Fetch the user's profile

@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useFriendStore } from '../store/useFriendStore';
-import { useWebSocket } from '../providers/WebSocketProvider'; 
-import { Check, X, MessageSquare, Trash2, Users, Clock, Loader2, AlertTriangle, CheckCircle2, Send, Search, LayoutGrid, List } from 'lucide-react';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { Check, X, MessageSquare, Trash2, Users, Clock, Loader2, AlertTriangle, CheckCircle2, Send, Search, LayoutGrid, List, Ban, ShieldAlert } from 'lucide-react';
 import Modal from '../components/Modal';
 
 interface FriendRequest {
@@ -12,7 +12,6 @@ interface FriendRequest {
   name?: string;
   username?: string;
   avatar_url?: string;
-  // Kept for fallback, though based on JSON they might not be needed
   sender_name?: string;
   sender_username?: string;
   sender_avatar?: string;
@@ -23,6 +22,15 @@ interface FriendRequest {
   last_message_at?: string;
 }
 
+// FIX: Added BlockedUser interface based on backend specs
+interface BlockedUser {
+  id: string;
+  name: string;
+  username: string;
+  avatar_url: string;
+  blocked_at: string;
+}
+
 const Friends = () => {
   const navigate = useNavigate();
   const { friends, fetchFriends } = useFriendStore();
@@ -30,9 +38,11 @@ const Friends = () => {
 
   const [receivedReqs, setReceivedReqs] = useState<FriendRequest[]>([]);
   const [sentReqs, setSentReqs] = useState<FriendRequest[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]); // FIX: New state for blocked users
   const [isLoading, setIsLoading] = useState(true);
   
-  const [activeTab, setActiveTab] = useState<'friends' | 'received' | 'sent'>('friends');
+  // FIX: Added 'blocked' to activeTab state
+  const [activeTab, setActiveTab] = useState<'friends' | 'received' | 'sent' | 'blocked'>('friends');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -50,14 +60,16 @@ const Friends = () => {
     try {
       await fetchFriends(true); 
 
-      const [recRes, sentRes] = await Promise.all([
-        api.get('/friends/requests?type=received'),
-        api.get('/friends/requests?type=sent')
+      // FIX: Added the blocked API call to the promise all
+      const [recRes, sentRes, blockedRes] = await Promise.all([
+        api.get('/friends/requests?type=received').catch(() => []),
+        api.get('/friends/requests?type=sent').catch(() => []),
+        api.get('/friends/blocked').catch(() => []) 
       ]);
 
-      // FIX: Robust array extraction
       setReceivedReqs(Array.isArray(recRes) ? recRes : recRes?.data || []);
       setSentReqs(Array.isArray(sentRes) ? sentRes : sentRes?.data || []);
+      setBlockedUsers(Array.isArray(blockedRes) ? blockedRes : blockedRes?.data || []);
 
     } catch (error) {
       console.error("Failed to fetch data:", error);
@@ -69,14 +81,12 @@ const Friends = () => {
   const fetchRequestsSilent = async () => {
     try {
       const [recRes, sentRes] = await Promise.all([
-        api.get('/friends/requests?type=received'),
-        api.get('/friends/requests?type=sent')
+        api.get('/friends/requests?type=received').catch(() => []),
+        api.get('/friends/requests?type=sent').catch(() => [])
       ]);
 
-      // FIX: Robust array extraction
       setReceivedReqs(Array.isArray(recRes) ? recRes : recRes?.data || []);
       setSentReqs(Array.isArray(sentRes) ? sentRes : sentRes?.data || []);
-
     } catch (error) {
       console.error("Failed to silently sync requests:", error);
     }
@@ -105,27 +115,13 @@ const Friends = () => {
 
   const handleAction = async (action: 'accept' | 'reject', username: string) => {
     if (!username) return showToast("Error: Missing Username", "error");
-
     setProcessingId(username);
-
     try {
       await api.post(`/friends/${action}`, { username });
-
-      showToast(
-        action === 'reject' ? "Request rejected." : "Request accepted!",
-        "success"
-      );
-
+      showToast(action === 'reject' ? "Request rejected." : "Request accepted!", "success");
       await fetchAllData();
-
     } catch (error: any) {
-      const backendMsg =
-        error.response?.data?.message ||
-        error.response?.data?.error ||
-        `API Error ${error.response?.status}: Failed to ${action}`;
-
-      showToast(backendMsg, 'error');
-
+      showToast(error.response?.data?.message || `Failed to ${action}`, 'error');
     } finally {
       setProcessingId(null);
       setConfirmConfig(null);
@@ -134,24 +130,13 @@ const Friends = () => {
 
   const handleRemoveFriend = async (username: string) => {
     if (!username) return;
-
     setProcessingId(username);
-
     try {
       await api.delete(`/friends/${username}`);
-
       showToast("Friend removed successfully.", "success");
-
       await fetchAllData();
-
     } catch (error: any) {
-      const backendMsg =
-        error.response?.data?.message ||
-        error.message ||
-        "Failed to remove friend.";
-
-      showToast(backendMsg, "error");
-
+      showToast(error.response?.data?.message || "Failed to remove friend.", "error");
     } finally {
       setProcessingId(null);
       setConfirmConfig(null);
@@ -160,45 +145,39 @@ const Friends = () => {
 
   const handleWithdraw = async (username: string) => {
     if (!username) return;
-
     setProcessingId(username);
-
     try {
       await api.delete(`/friends/request/${username}`);
-
       showToast("Friend request withdrawn.", "success");
-
-      // Update state immediately to reflect UI change
-      setSentReqs(prev =>
-        prev.filter(
-          req =>
-            req.username !== username &&
-            req.receiver_username !== username
-        )
-      );
-
+      setSentReqs(prev => prev.filter(req => req.username !== username && req.receiver_username !== username));
     } catch (error: any) {
-      const backendMsg =
-        error.response?.data?.message ||
-        error.message ||
-        "Failed to withdraw request.";
-
-      showToast(backendMsg, "error");
-
+      showToast(error.response?.data?.message || "Failed to withdraw request.", "error");
     } finally {
       setProcessingId(null);
     }
+  };
+
+  // FIX: New function to handle unblocking users
+  const handleUnblock = async (username: string) => {
+      if (!username) return;
+      setProcessingId(`unblock_${username}`);
+      try {
+          await api.delete(`/friends/block/${username}`);
+          showToast("User unblocked successfully.", "success");
+          setBlockedUsers(prev => prev.filter(u => u.username !== username));
+      } catch (error: any) {
+          showToast(error.response?.data?.message || "Failed to unblock user.", "error");
+      } finally {
+          setProcessingId(null);
+          setConfirmConfig(null);
+      }
   };
 
   const handleMessageFriend = async (username: string) => {
     try {
       const res = await api.post("/rooms", { username });
       const targetRoomId = res.data?.room_id || res.data?.id;
-
-      navigate("/chats", {
-        state: { autoOpenRoomId: targetRoomId }
-      });
-
+      navigate("/chats", { state: { autoOpenRoomId: targetRoomId } });
     } catch (error: any) {
       showToast("Failed to start conversation.", "error");
     }
@@ -207,9 +186,7 @@ const Friends = () => {
   const formatDate = (isoString: string) => {
     if (!isoString) return 'Recently';
     return new Date(isoString).toLocaleDateString('en-GB', { 
-      day: '2-digit', 
-      month: 'long', 
-      year: 'numeric' 
+      day: '2-digit', month: 'long', year: 'numeric' 
     });
   };
 
@@ -222,19 +199,20 @@ const Friends = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6">
                 <div className="flex flex-col gap-0.5">
                   <h1 className="text-xl md:text-3xl font-display font-extrabold text-gray-900 dark:text-white flex items-center gap-2 md:gap-3">
-                    <Users className="text-blue-600 dark:text-blue-500 w-6 h-6 md:w-8 md:h-8" strokeWidth={2.5} /> Your Squad
+                    <Users className="text-blue-600 dark:text-blue-500 w-6 h-6 md:w-8 md:h-8" strokeWidth={2.5} /> Your Connections
                   </h1>
-                  <p className="text-[10px] md:text-sm font-medium text-gray-500 dark:text-gray-400">Manage network and connections.</p>
+                  <p className="text-[10px] md:text-sm font-medium text-gray-500 dark:text-gray-400">Manage your squad and requests.</p>
                 </div>
 
                 <div className="relative flex-1 max-w-md w-full">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 md:w-5 md:h-5" strokeWidth={2.5} />
                   <input 
                     type="text"
-                    placeholder="Search friends..."
+                    placeholder={activeTab === 'friends' ? "Search friends..." : "Search disabled..."}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 md:pl-11 pr-4 py-2.5 md:py-3 bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] rounded-xl md:rounded-2xl text-xs md:text-sm font-bold text-gray-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-[#111] transition-all shadow-inner dark:shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] focus:shadow-[inset_0_2px_4px_rgba(255,255,255,1),_0_4px_12px_rgba(59,130,246,0.15)] dark:focus:shadow-[inset_0_2px_4px_rgba(255,255,255,0.05),_0_4px_12px_rgba(59,130,246,0.3)]"
+                    disabled={activeTab !== 'friends'}
+                    className="w-full pl-10 md:pl-11 pr-4 py-2.5 md:py-3 bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-[#343536] rounded-xl md:rounded-2xl text-xs md:text-sm font-bold text-gray-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-[#111] transition-all shadow-inner disabled:opacity-50"
                   />
                 </div>
             </div>
@@ -244,6 +222,8 @@ const Friends = () => {
                   <TabButton active={activeTab === 'friends'} onClick={() => setActiveTab('friends')} icon={<Users className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.5} />} label={`Friends (${friends.length})`} />
                   <TabButton active={activeTab === 'received'} onClick={() => setActiveTab('received')} icon={<Clock className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.5} />} label="Received" badge={receivedReqs.length} />
                   <TabButton active={activeTab === 'sent'} onClick={() => setActiveTab('sent')} icon={<Send className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.5} />} label="Sent" badge={sentReqs.length} />
+                  {/* FIX: Added Blocked Tab */}
+                  <TabButton active={activeTab === 'blocked'} onClick={() => setActiveTab('blocked')} icon={<Ban className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.5} />} label="Blocked" badge={blockedUsers.length > 0 ? blockedUsers.length : undefined} />
                 </div>
 
                 <div className="flex bg-gray-100 dark:bg-[#0a0a0a] p-1 rounded-xl border border-gray-200 dark:border-[#343536] shadow-inner shrink-0 self-end sm:self-auto">
@@ -289,6 +269,20 @@ const Friends = () => {
                     />
                   )) : <EmptyState icon={<Clock className="w-10 h-10 md:w-12 md:h-12" strokeWidth={2.5} />} title="All Clear" description="No pending requests at the moment." />
                 )}
+
+                {/* FIX: Render Blocked Users */}
+                {activeTab === 'blocked' && (
+                  blockedUsers.length > 0 ? blockedUsers.map((user) => (
+                    <BlockedCard 
+                       key={user.id} 
+                       user={user} 
+                       viewMode={viewMode} 
+                       formatDate={formatDate} 
+                       onUnblock={() => setConfirmConfig({ title: "Unblock User", desc: `Are you sure you want to unblock @${user.username}? They will be able to message you again.`, actionLabel: "Unblock", isDanger: false, onConfirm: () => handleUnblock(user.username) })}
+                       processingId={processingId}
+                    />
+                  )) : <EmptyState icon={<ShieldAlert className="w-10 h-10 md:w-12 md:h-12 text-green-500" strokeWidth={2.5} />} title="No blocked users" description="You haven't blocked anyone yet." />
+                )}
              </div>
            )}
         </div>
@@ -296,8 +290,10 @@ const Friends = () => {
 
       <Modal isOpen={confirmConfig !== null} onClose={() => setConfirmConfig(null)} title={confirmConfig?.title || "Confirm Action"} footer={
           <div className="flex gap-3 w-full">
-            <button onClick={() => setConfirmConfig(null)} className="flex-1 py-2.5 md:py-3 text-xs md:text-sm font-extrabold text-gray-500">Cancel</button>
-            <button onClick={confirmConfig?.onConfirm} className={`flex-1 py-2.5 md:py-3 text-xs md:text-sm font-extrabold rounded-xl md:rounded-2xl shadow-lg ${confirmConfig?.isDanger ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-blue-600 text-white hover:bg-blue-500'}`}>{processingId ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : confirmConfig?.actionLabel}</button>
+            <button onClick={() => setConfirmConfig(null)} className="flex-1 py-2.5 md:py-3 text-xs md:text-sm font-extrabold text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={confirmConfig?.onConfirm} className={`flex-1 py-2.5 md:py-3 text-xs md:text-sm font-extrabold rounded-xl md:rounded-2xl shadow-lg transition-all ${confirmConfig?.isDanger ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-blue-600 text-white hover:bg-blue-500'}`}>
+                {processingId ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : confirmConfig?.actionLabel}
+            </button>
           </div>
         }>
         <div className="flex flex-col items-center text-center py-2 md:py-4">
@@ -335,8 +331,29 @@ const FriendCard = ({ f, viewMode, formatDate, onMessage, onRemove }: any) => (
   </div>
 );
 
+// FIX: New Component for Blocked Users
+const BlockedCard = ({ user, viewMode, formatDate, onUnblock, processingId }: any) => (
+  <div className={`bg-red-50/50 dark:bg-red-950/10 border border-red-100 dark:border-red-900/30 rounded-[1.5rem] md:rounded-[2rem] hover:border-red-300 dark:hover:border-red-700 transition-all shadow-sm flex ${viewMode === 'grid' ? 'flex-col p-4 md:p-6 items-center text-center' : 'p-3 md:p-4 items-center justify-between'}`}>
+    <div className={`flex items-center gap-3 md:gap-4 ${viewMode === 'grid' ? 'flex-col' : 'min-w-0 flex-1'}`}>
+      <div className="relative shrink-0">
+        <img src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.name}&background=random`} alt={user.name} className={`${viewMode === 'grid' ? 'w-16 h-16 md:w-20 md:h-20' : 'w-10 h-10 md:w-14 md:h-14'} rounded-2xl md:rounded-3xl bg-gray-100 dark:bg-gray-800 object-cover border-2 border-red-200 dark:border-red-900/50 grayscale-[50%]`} />
+        <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white dark:border-[#1A1A1B] bg-red-500 text-white flex items-center justify-center`}><Ban size={10} strokeWidth={3} /></div>
+      </div>
+      <div className="min-w-0 overflow-hidden">
+        <h3 className="text-red-900 dark:text-red-200 font-extrabold text-xs md:text-base truncate">{user.name}</h3>
+        <p className="text-[10px] md:text-xs font-bold text-red-500 dark:text-red-400/70 truncate">@{user.username}</p>
+        <p className="text-[8px] md:text-[10px] font-bold text-red-400 dark:text-red-500/50 mt-0.5 md:mt-1 uppercase tracking-widest truncate">Blocked {formatDate(user.blocked_at)}</p>
+      </div>
+    </div>
+    <div className={`flex items-center shrink-0 ${viewMode === 'grid' ? 'mt-4 md:mt-6 w-full' : ''}`}>
+      <button onClick={onUnblock} disabled={processingId === `unblock_${user.username}`} className={`py-2 px-4 bg-white dark:bg-[#111] text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl md:rounded-2xl transition-all border border-gray-200 dark:border-[#343536] text-xs font-extrabold flex items-center justify-center gap-2 ${viewMode === 'grid' ? 'w-full' : ''}`}>
+        {processingId === `unblock_${user.username}` ? <Loader2 className="w-4 h-4 animate-spin" /> : "Unblock"}
+      </button>
+    </div>
+  </div>
+);
+
 const RequestCard = ({ req, type, formatDate, onAction, onWithdraw, processingId, viewMode }: any) => {
-  // FIX: Always use name/username/avatar_url regardless of 'type' based on JSON
   const name = req.name || req.sender_name || req.receiver_name || 'Unknown User';
   const username = req.username || req.sender_username || req.receiver_username || '';
   const avatar = req.avatar_url || req.avatarUrl || req.sender_avatar || req.receiver_avatar;
@@ -376,7 +393,7 @@ const RequestCard = ({ req, type, formatDate, onAction, onWithdraw, processingId
 const TabButton = ({ active, onClick, icon, label, badge }: any) => (
   <button onClick={onClick} className={`flex items-center justify-center gap-1.5 md:gap-2 px-4 md:px-6 py-2 md:py-3 text-[10px] md:text-sm font-extrabold rounded-xl md:rounded-2xl transition-all relative shrink-0 border-2 ${active ? 'bg-blue-600 dark:bg-[#1E3A8A] text-white border-blue-500 dark:border-[#1E40AF] shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)]' : 'bg-white dark:bg-[#272729] text-gray-500 dark:text-gray-400 border-gray-100 dark:border-[#343536] hover:bg-gray-50 dark:hover:bg-[#343536]'}`}>
     {icon} <span className="truncate max-w-[60px] md:max-w-none">{label}</span>
-    {badge > 0 && <span className="ml-0.5 md:ml-1 w-4 h-4 md:w-5 md:h-5 bg-red-500 text-white text-[8px] md:text-[10px] flex items-center justify-center rounded-full border-2 border-white dark:border-[#1A1A1B]">{badge}</span>}
+    {badge && badge > 0 && <span className="ml-0.5 md:ml-1 w-4 h-4 md:w-5 md:h-5 bg-red-500 text-white text-[8px] md:text-[10px] flex items-center justify-center rounded-full border-2 border-white dark:border-[#1A1A1B]">{badge}</span>}
   </button>
 );
 

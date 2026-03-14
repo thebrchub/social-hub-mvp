@@ -3,11 +3,11 @@ import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { useFriendStore } from '../store/useFriendStore'; 
-import { useWebSocket } from '../providers/WebSocketProvider';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { ChatSidebar } from '../components/chats/ChatSidebar';
 import { ChatWindow } from '../components/chats/ChatWindow';
 import { ChatGroupWindow } from '../components/chats/ChatGroupWindow'; 
-import { PhoneCall, Loader2 } from 'lucide-react';
+import { Loader2, Users, WifiOff } from 'lucide-react';
 import Modal from '../components/Modal';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { useLocation } from 'react-router-dom';
@@ -21,7 +21,8 @@ interface ChatMessage { id?: string; message_id?: string; text?: string; content
 export default function Chats() {
   const user = useAuthStore(state => state.user);
   const location = useLocation();
-  const { sendMessage, sendRaw, sendTypingStart, markRead, markDelivered, isConnected, subscribe } = useWebSocket();
+//   const navigate = useNavigate();
+  const { sendTypingStart, markRead, markDelivered, isConnected, subscribe, sendRaw } = useWebSocket();
   const { friends, fetchFriends } = useFriendStore(); 
 
   const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success'|'error'|'info'|'warning'} | null>(null);
@@ -40,7 +41,6 @@ export default function Chats() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   
-  // FIX: Drafts & ReplyingTo states separated by Room ID
   const [inputValue, setInputValue] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [draftReplies, setDraftReplies] = useState<Record<string, ChatMessage | null>>({});
@@ -64,7 +64,6 @@ export default function Chats() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMarkReadTime = useRef<number>(0);
   const hasSentInitialDelivery = useRef(false);
-  const wsRef = useRef<any>(null); 
 
   const [activeTab, setActiveTab] = useState<'chats' | 'requests' | 'calls'>('chats');
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -80,19 +79,6 @@ export default function Chats() {
   const [isPrivateGroup, setIsPrivateGroup] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
 
-  const [incomingCall, setIncomingCall] = useState<any>(null);
-  const [activeCall, setActiveCall] = useState<any>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
-  const [callMicOff, setCallMicOff] = useState(false);
-  const [callCamOff, setCallCamOff] = useState(false);
-
-  const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
-  const outgoingAudioRef = useRef<HTMLAudioElement | null>(null);
-
   const userMap = useMemo(() => {
      const map: Record<string, any> = {};
      rooms.forEach(r => {
@@ -103,25 +89,6 @@ export default function Chats() {
      });
      return map;
   }, [rooms]);
-
-  const wsSendSignaling = (payload: any) => { if (sendRaw) sendRaw(payload); };
-
-  const playSound = (type: 'message' | 'ring_in' | 'ring_out') => {
-      if (type === 'ring_in') {
-         if (!incomingAudioRef.current) { incomingAudioRef.current = new Audio('/ringtone.mp3'); incomingAudioRef.current.loop = true; }
-         incomingAudioRef.current.play().catch(() => {});
-      } else if (type === 'ring_out') {
-         if (!outgoingAudioRef.current) { outgoingAudioRef.current = new Audio('/ringtone.mp3'); outgoingAudioRef.current.loop = true; }
-         outgoingAudioRef.current.play().catch(() => {});
-      } else {
-         const audio = new Audio('/message.mp3'); audio.play().catch(() => {});
-      }
-  };
-
-  const stopAllRingtones = () => {
-      if (incomingAudioRef.current) { incomingAudioRef.current.pause(); incomingAudioRef.current.currentTime = 0; incomingAudioRef.current.src = ''; incomingAudioRef.current = null; }
-      if (outgoingAudioRef.current) { outgoingAudioRef.current.pause(); outgoingAudioRef.current.currentTime = 0; outgoingAudioRef.current.src = ''; outgoingAudioRef.current = null; }
-  };
 
   const showToast = (msg: string, type: 'success'|'error'|'info'|'warning' = 'success') => {
       setToastMessage({msg, type});
@@ -157,13 +124,16 @@ export default function Chats() {
   const fetchChatsData = async () => {
     try {
       const [roomsRes, requestsRes, invitesRes, historyRes] = await Promise.all([
-        api.get('/rooms?limit=50').catch(() => []),
-        api.get('/rooms/requests').catch(() => []),
-        api.get('/groups/invites').catch(() => []),
-        api.get('/calls/history?limit=30').catch(() => []) 
+        api.get('/rooms?limit=50').catch(() => ({ data: { rooms: [], users: {} } })),
+        api.get('/rooms/requests').catch(() => ({ data: [] })),
+        api.get('/groups/invites').catch(() => ({ data: [] })),
+        api.get('/calls/history?limit=30').catch(() => ({ data: [] })) 
       ]);
       
-      let fetchedRooms = Array.isArray(roomsRes) ? roomsRes : roomsRes?.data || [];
+      const rawRoomsData = roomsRes?.data || roomsRes;
+      let fetchedRooms = rawRoomsData.rooms || (Array.isArray(rawRoomsData) ? rawRoomsData : []);
+      const usersMap = rawRoomsData.users || {};
+
       const fetchedReqs = Array.isArray(requestsRes) ? requestsRes : requestsRes?.data || [];
       const fetchedInvites = Array.isArray(invitesRes) ? invitesRes : invitesRes?.data || [];
       const histData = historyRes?.data || historyRes;
@@ -173,13 +143,24 @@ export default function Chats() {
       setGroupInvites(fetchedInvites);
       setCallHistory(fetchedHistory);
 
+      const currentUserId = useAuthStore.getState().user?.id;
+
       fetchedRooms = fetchedRooms.map((room: any) => {
-         if ((room.type === 'DM' || room.type === 'private') && room.members) {
-             const partner = room.members.find((m: any) => m.id !== user?.id);
+         // Stitch members first
+         if (room.member_ids && Array.isArray(room.member_ids)) {
+             room.members = room.member_ids.map((id: string) => {
+                 const userDetails = usersMap[id];
+                 return userDetails ? { id, ...userDetails } : { id };
+             });
+         }
+
+         // Now find partner correctly
+         if ((room.type === 'DM' || room.type === 'private' || room.type === 'private_dm') && room.members) {
+             const partner = room.members.find((m: any) => String(m.id) !== String(currentUserId));
              if (partner) {
                  room.name = partner.name || partner.username;
                  room.friend_username = partner.username;
-                 room.partner_id = partner.id;
+                 room.partner_id = partner.id; // CRITICAL FIX: Ensure this is set for calls
                  room.avatar_url = partner.avatar_url || partner.avatarUrl;
                  room.avatarUrl = partner.avatar_url || partner.avatarUrl; 
                  setPresence(prev => ({ ...prev, [partner.id]: { online: partner.is_online || false, lastSeen: partner.last_seen_at || null } }));
@@ -199,10 +180,23 @@ export default function Chats() {
          setSelectedRoomId(location.state.autoOpenRoomId);
          window.history.replaceState({}, document.title) 
       }
-    } catch (error) { console.error("Failed to fetch chats data:", error); } finally { setIsLoadingSidebar(false); }
+    } catch (error) { 
+        console.error("Failed to fetch chats data:", error); 
+    } finally { 
+        setIsLoadingSidebar(false); 
+    }
   };
 
-  useEffect(() => { fetchChatsData(); fetchFriends(); }, [location.state?.autoOpenRoomId]); 
+  useEffect(() => { 
+      fetchChatsData(); 
+      fetchFriends(); 
+      
+      // ADD THIS: Listen for call endings to refresh the sidebar history!
+      const handleRefresh = () => fetchChatsData();
+      window.addEventListener('REFRESH_CHATS', handleRefresh);
+      return () => window.removeEventListener('REFRESH_CHATS', handleRefresh);
+      
+  }, [location.state?.autoOpenRoomId]);
 
   useEffect(() => {
     if (isConnected && markDelivered && rooms.length > 0 && !hasSentInitialDelivery.current) {
@@ -248,15 +242,11 @@ export default function Chats() {
     } finally { setIsMessagesLoading(false); setIsLoadingOlder(false); }
   };
 
-  // FIX: Load drafts when changing rooms
   useEffect(() => {
     if (!selectedRoomId) { setMessages([]); return; }
     
-    // 1. Fetch text draft from LocalStorage
     const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
     setInputValue(savedDrafts[selectedRoomId] || "");
-    
-    // 2. Fetch reply state from memory
     setReplyingTo(draftReplies[selectedRoomId] || null);
 
     setIsSearchingMessages(false); setMessageSearchQuery("");
@@ -282,7 +272,6 @@ export default function Chats() {
 
   useEffect(() => {
     if (!subscribe) return;
-    wsRef.current = (payload: any) => { wsSendSignaling(payload); };
     const unsubscribe = subscribe(async (parsed: any) => {
       if (parsed.type === 'presence_online') setPresence(prev => ({ ...prev, [parsed.userId]: { online: true, lastSeen: null }}));
       if (parsed.type === 'presence_offline') setPresence(prev => ({ ...prev, [parsed.userId]: { online: false, lastSeen: parsed.lastSeenAt }}));
@@ -293,48 +282,79 @@ export default function Chats() {
          typingTimeoutRef.current = setTimeout(() => setTypingData(null), 3000); 
       }
 
-      if (parsed.type === 'group_invite') { showToast(`You were invited to join ${parsed.groupName || 'a squad'}!`, "info"); fetchChatsData(); }
-      if (parsed.type === 'group_invite_accepted') {
+      if (parsed.type === 'group_invite') { 
+          showToast(`You were invited to join ${parsed.groupName || 'a squad'}!`, "info"); 
+          fetchChatsData(); 
+          useNotificationStore.getState().addNotification({
+              type: 'GROUP_INVITE',
+              title: `Squad Invite: ${parsed.groupName || 'New Squad'}`,
+              message: `@${parsed.inviterName || 'Someone'} invited you to join their squad!`,
+              time: parsed.invitedAt || new Date().toISOString(),
+              data: {
+                  roomId: parsed.roomId || parsed.groupId,
+                  groupName: parsed.groupName,
+                  avatarUrl: parsed.avatarUrl,
+                  inviterName: parsed.inviterName
+              }
+          });
+      }
+      
+      if (parsed.type === 'group_invite_accepted' || parsed.type === 'member_joined' || parsed.type === 'group_updated') {
          fetchChatsData(); 
-         if (parsed.roomId === selectedRoomIdRef.current) fetchRoomDetails(parsed.roomId, 'group');
+         const targetId = parsed.roomId || parsed.groupId || parsed.room_id;
+         if (String(targetId) === String(selectedRoomIdRef.current)) {
+             fetchRoomDetails(targetId, 'group');
+         }
       }
 
-      if (parsed.type === 'send_message' || parsed.type === 'group_message') {
+      if (parsed.type === 'send_message' || parsed.type === 'group_message' || parsed.type === 'message' || parsed.type === 'message_sent_confirm') {
          const incomingText = parsed.text || parsed.content || "New message";
          const targetRoomId = String(parsed.roomId || parsed.room_id || parsed.groupId);
          const currentRoomId = String(selectedRoomIdRef.current);
-         const isMe = String(parsed.from) === String(user?.id) || String(parsed.sender_id) === String(user?.id);
-         const isCurrentlyLookingAtThisChat = document.visibilityState === 'visible' && targetRoomId === currentRoomId;
          
-         if (!isMe && !isCurrentlyLookingAtThisChat) {
-             playSound('message');
+         const incomingTempId = parsed.tempId || parsed.temp_id;
+         const incomingMsgId = parsed.id || parsed.message_id;
+
+         let senderId = parsed.from || parsed.sender_id || parsed.senderId || parsed.userId;
+         if (!senderId && parsed.user) senderId = parsed.user.id;
+         
+         const isMe = String(senderId) === String(user?.id);
+         const isCurrentlyLookingAtThisChat = document.visibilityState === 'visible' && targetRoomId === currentRoomId;
+
+         if (parsed.type !== 'message_sent_confirm') {
+             setRooms(prev => {
+                let updated = prev.map(r => {
+                   if (String(r.room_id) === targetRoomId) {
+                      const newUnreadCount = (!isCurrentlyLookingAtThisChat && !isMe) ? (r.unread_count || 0) + 1 : r.unread_count;
+                      return { ...r, last_message_preview: incomingText, last_message_at: new Date().toISOString(), unread_count: newUnreadCount };
+                   }
+                   return r;
+                });
+                const targetIdx = updated.findIndex(r => String(r.room_id) === targetRoomId);
+                if (targetIdx > 0) { const [target] = updated.splice(targetIdx, 1); updated.unshift(target); }
+                return updated;
+             });
          }
 
-         setRooms(prev => {
-            let updated = prev.map(r => {
-               if (String(r.room_id) === targetRoomId) {
-                  const newUnreadCount = (!isCurrentlyLookingAtThisChat && !isMe) ? (r.unread_count || 0) + 1 : r.unread_count;
-                  return { ...r, last_message_preview: incomingText, last_message_at: new Date().toISOString(), unread_count: newUnreadCount };
-               }
-               return r;
-            });
-            const targetIdx = updated.findIndex(r => String(r.room_id) === targetRoomId);
-            if (targetIdx > 0) { const [target] = updated.splice(targetIdx, 1); updated.unshift(target); }
-            return updated;
-         });
-
-         if (isMe) {
+         if (isMe || parsed.type === 'message_sent_confirm') {
             setMessages(prev => prev.map(m => {
-               if (m._tempId === parsed.tempId || m.id === parsed.tempId || (m.status === 'sending' && (m.text === incomingText || m.content === incomingText))) {
-                  return { ...m, status: 'sent', id: parsed.id || parsed.message_id };
+               if (m._tempId === incomingTempId || m.id === incomingTempId || (m.status === 'sending' && (m.text === incomingText || m.content === incomingText))) {
+                  return { ...m, status: 'sent', id: incomingMsgId };
                }
                return m;
             }));
          } else if (targetRoomId === currentRoomId) {
              setMessages(prev => {
-                if (parsed.id && prev.some(m => m.id === parsed.id)) return prev;
-                if (parsed.tempId && prev.some(m => m._tempId === parsed.tempId)) return prev;
-                return [...prev, { id: parsed.id || parsed.tempId || Date.now().toString(), sender_id: parsed.from || parsed.sender_id, text: incomingText, created_at: new Date().toISOString(), status: 'read', type: parsed.msgType || 'chat' }];
+                if (incomingMsgId && prev.some(m => m.id === incomingMsgId)) return prev;
+                if (incomingTempId && prev.some(m => m._tempId === incomingTempId)) return prev;
+                return [...prev, { 
+                    id: incomingMsgId || incomingTempId || Date.now().toString(), 
+                    sender_id: senderId, 
+                    text: incomingText, 
+                    created_at: new Date().toISOString(), 
+                    status: 'read', 
+                    type: parsed.msgType || 'chat' 
+                }];
              });
              if (isConnected) triggerMarkRead(targetRoomId);
              setTimeout(() => scrollToBottom("auto"), 10); 
@@ -346,123 +366,85 @@ export default function Chats() {
          }
       }
 
-      if (parsed.type === 'message_sent_confirm') {
-          setMessages(prev => prev.map(m => (m._tempId === parsed.tempId || m.id === parsed.tempId) ? { ...m, status: (m.status === 'delivered' || m.status === 'read') ? m.status : 'sent', id: parsed.id } : m));
-      }
-
-      if (parsed.type === 'message_delivered' && String(parsed.roomId) === String(selectedRoomIdRef.current) && String(parsed.userId) !== String(user?.id)) {
+      if (parsed.type === 'message_delivered' && String(parsed.roomId || parsed.room_id) === String(selectedRoomIdRef.current) && String(parsed.userId) !== String(user?.id)) {
          setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && (m.status === 'sending' || m.status === 'sent' || !m.status)) ? { ...m, status: 'delivered' } : m));
       }
-      if (parsed.type === 'message_read' && String(parsed.roomId) === String(selectedRoomIdRef.current) && Date.now() - lastMarkReadTime.current > 2000 && String(parsed.userId) !== String(user?.id)) {
+      if (parsed.type === 'message_read' && String(parsed.roomId || parsed.room_id) === String(selectedRoomIdRef.current) && Date.now() - lastMarkReadTime.current > 2000 && String(parsed.userId) !== String(user?.id)) {
          setMessages(prev => prev.map(m => ((String(m.sender_id) === String(user?.id) || String(m.from) === String(user?.id)) && m.status !== 'read') ? { ...m, status: 'read' } : m));
-      }
-
-      if (parsed.type === 'call_ring') { playSound('ring_in'); setIncomingCall(parsed); }
-      if (parsed.type === 'call_reject' || parsed.type === 'call_end' || parsed.type === 'call_dismiss' || parsed.type === 'error') {
-          stopAllRingtones(); setIncomingCall(null);
-          if (parsed.type === 'call_reject') showToast(`Call ${parsed.reason || 'declined'}`, 'error');
-          if (parsed.type === 'call_end') showToast('Call ended', 'warning');
-          if (parsed.type === 'error') { showToast(parsed.message || "Action not allowed", "error"); if (!parsed.message?.toLowerCase().includes("call friends")) return; }
-          endActiveCall(); fetchChatsData(); 
-      }
-      if (parsed.type === 'call_accept') {
-          stopAllRingtones(); setActiveCall((prev: any) => prev ? { ...prev, isAccepted: true } : prev);
-          if (pcRef.current) return;
-          const pc = await initPeerConnection(parsed.from, parsed.callId);
-          const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-          wsSendSignaling({ type: 'call_offer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(offer) });
-      }
-      if (parsed.type === 'call_offer') {
-          const pc = pcRef.current || await initPeerConnection(parsed.from, parsed.callId);
-          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
-          const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
-          wsSendSignaling({ type: 'call_answer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(answer) });
-          iceCandidateQueue.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c))); iceCandidateQueue.current = [];
-      }
-      if (parsed.type === 'call_answer') {
-          if (pcRef.current) { await pcRef.current.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp))); iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c))); iceCandidateQueue.current = []; }
-      }
-      if (parsed.type === 'ice_candidate') {
-          const candidate = JSON.parse(parsed.candidate);
-          if (pcRef.current && pcRef.current.remoteDescription) pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)); else iceCandidateQueue.current.push(candidate);
       }
     });
     return unsubscribe;
-  }, [user?.id, isConnected, subscribe, markDelivered, markRead]);
+  }, [user?.id, isConnected, subscribe, markDelivered, markRead, rooms]); // Added rooms to dependency array
 
-  const getMedia = async (video: boolean) => {
-      try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: video ? { width: { ideal: 1280 } } : false });
-          localStreamRef.current = stream; if (localVideoRef.current) localVideoRef.current.srcObject = stream; return stream;
-      } catch (err) { showToast('Camera/Mic permission denied', 'error'); return null; }
-  };
 
-  const initPeerConnection = async (targetUserId: string, callId: string) => {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-      pcRef.current = pc; iceCandidateQueue.current = [];
-      pc.onicecandidate = (e) => { if (e.candidate) wsSendSignaling({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); };
-      pc.ontrack = (e) => { 
-          const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== stream) { remoteVideoRef.current.srcObject = stream; remoteVideoRef.current.play().catch(console.error); } 
-      };
-      pc.oniceconnectionstatechange = () => { if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') endActiveCall(); };
-      if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
-      return pc;
-  };
-
-  const handleStartCall = async (type: 'audio' | 'video', isGroupCall: boolean) => {
-      if (!selectedRoomId || isGroupCall) return; 
-      const targetRoom = rooms.find(r => r.room_id === selectedRoomId);
-      if (!targetRoom || !targetRoom.partner_id) return; 
-      const stream = await getMedia(type === 'video'); if (!stream) return;
-      playSound('ring_out'); 
-      const callId = `call_${Date.now()}`;
-      setActiveCall({ id: callId, roomId: selectedRoomId, peerName: targetRoom.name || 'User', isVideo: type === 'video', peerId: targetRoom.partner_id, isAccepted: false });
-      wsSendSignaling({ type: 'call_ring', to: targetRoom.partner_id, callId, roomId: selectedRoomId, callType: type, hasVideo: type === 'video' });
-  };
-
-  const acceptIncomingCall = async (resolvedName: string) => {
-      stopAllRingtones(); const parsed = incomingCall; setIncomingCall(null);
-      const stream = await getMedia(parsed.hasVideo);
-      if (!stream) { wsSendSignaling({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' }); return; }
-      setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: resolvedName, isVideo: parsed.hasVideo, peerId: parsed.from, isAccepted: true });
-      wsSendSignaling({ type: 'call_accept', to: parsed.from, callId: parsed.callId });
-  };
-
-  const rejectIncomingCall = () => { stopAllRingtones(); wsSendSignaling({ type: 'call_reject', to: incomingCall.from, callId: incomingCall.callId, reason: 'rejected' }); setIncomingCall(null); };
-
-  const endActiveCall = () => {
-      stopAllRingtones();
-      if (activeCall && activeCall.peerId) wsSendSignaling({ type: 'call_end', to: activeCall.peerId, callId: activeCall.id });
-      if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
-      if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-      setActiveCall(null);
-  };
-
-  const handleCallLogClick = async (call: any) => {
+  // FIX: Unified, bulletproof handler for both Opening Chats and Redialing Calls
+  const handleCallLogClick = async (call: any, action: 'chat' | 'video' | 'audio' = 'chat') => {
+      // Safely extract every possible ID format the backend might send
+      const roomId = call.roomId || call.room_id || call.groupId;
       const isOutgoing = String(call.initiatedBy) === String(user?.id);
-      const otherId = isOutgoing ? (call.peerId || call.receiverId || call.to || call.partner_id) : call.initiatedBy;
-      const knownUser = userMap[otherId] || Object.values(userMap).find(u => u.name === call.callerName || u.name === call.peerName);
-      const targetUsername = knownUser?.username || call.callerUsername || call.peerUsername;
+      const peerId = isOutgoing ? (call.peerId || call.receiverId || call.to || call.partner_id) : (call.initiatedBy || call.callerId || call.from);
+      const peerName = isOutgoing ? (call.peerName || call.receiverName || 'Unknown') : (call.callerName || 'Unknown');
+      const peerAvatar = isOutgoing ? (call.peerAvatar || call.receiverAvatar) : call.callerAvatar;
 
-      if (targetUsername) {
-          try { const res = await api.post('/rooms', { username: targetUsername }); setSelectedRoomId(res.data?.room_id || res.data?.id); setActiveTab('chats'); } 
-          catch (e) { showToast("Failed to open chat", "error"); }
-      } else { showToast("User details not found to start chat", "error"); }
+      // SCENARIO 1: We have the roomId right away (Fastest)
+      if (roomId && peerId) {
+          if (action === 'chat') {
+              setSelectedRoomId(roomId);
+              setActiveTab('chats');
+          } else {
+              window.dispatchEvent(new CustomEvent('START_CALL', {
+                  detail: { roomId, peerId, type: action, peerName, peerAvatar }
+              }));
+          }
+          return;
+      }
+
+      // SCENARIO 2: Room ID is missing from history. We must fetch/create it using username.
+      const knownUser = userMap[peerId] || Object.values(userMap).find((u: any) => u.name === peerName);
+      const targetUsername = knownUser?.username || call.peerUsername || call.callerUsername;
+
+      if (!targetUsername) {
+          showToast("Cannot find user details to complete this action.", "error");
+          return;
+      }
+
+      try {
+          // Force fetch the room to get the official Room ID
+          const res = await api.post('/rooms', { username: targetUsername });
+          const fetchedRoomId = res.data?.room_id || res.data?.id;
+
+          if (action === 'chat') {
+              setSelectedRoomId(fetchedRoomId);
+              setActiveTab('chats');
+          } else {
+              window.dispatchEvent(new CustomEvent('START_CALL', {
+                  detail: { roomId: fetchedRoomId, peerId, type: action, peerName, peerAvatar }
+              }));
+          }
+      } catch (e) {
+          showToast(`Failed to ${action === 'chat' ? 'open chat' : 'start call'}`, "error");
+      }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+ const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !selectedRoomId) return;
+    if (!inputValue.trim() || !selectedRoomId || !activeRoom) return;
 
-    // Encode ID so we can click-to-scroll later
+    if (!isConnected) { showToast("Currently offline.", "error"); return; }
+
     const finalMessageText = replyingTo ? `> [id:${replyingTo.id || replyingTo._tempId}] ${replyingTo.text || replyingTo.content}\n\n${inputValue}` : inputValue;
     const tempId = `tmp_${Date.now()}`;
-    const newMsg: ChatMessage = { _tempId: tempId, text: finalMessageText, sender_id: user?.id, created_at: new Date().toISOString(), status: 'sending' };
+    
+    setMessages(prev => [...prev, { _tempId: tempId, text: finalMessageText, sender_id: user?.id, created_at: new Date().toISOString(), status: 'sending' }]);
 
-    setMessages(prev => [...prev, newMsg]);
-    sendMessage(selectedRoomId, finalMessageText, tempId);
+    // THE ULTIMATE FIX: Exact schema match with the backend's HTML client.
+    // Strictly camelCase, no extra fields, and send_message works for groups too!
+    sendRaw({
+        type: 'send_message',
+        roomId: selectedRoomId, 
+        text: finalMessageText,
+        tempId: tempId
+    });
     
     setRooms(prev => {
        let updated = prev.map(r => r.room_id === selectedRoomId ? { ...r, last_message_preview: inputValue, last_message_at: new Date().toISOString() } : r);
@@ -471,19 +453,12 @@ export default function Chats() {
        return updated;
     });
     
-    // FIX: Clear local storage draft and state on send
-    setInputValue(""); 
-    handleSetReplyingTo(null); 
-    setShowEmojiPicker(false);
-    
+    setInputValue(""); handleSetReplyingTo(null); setShowEmojiPicker(false);
     const savedDrafts = JSON.parse(localStorage.getItem('chat_drafts') || '{}');
-    delete savedDrafts[selectedRoomId];
-    localStorage.setItem('chat_drafts', JSON.stringify(savedDrafts));
-
+    delete savedDrafts[selectedRoomId]; localStorage.setItem('chat_drafts', JSON.stringify(savedDrafts));
     setTimeout(() => scrollToBottom("smooth"), 50);
   };
 
-  // FIX: Save drafts to local storage dynamically
   const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setInputValue(val);
@@ -495,7 +470,6 @@ export default function Chats() {
     }
   };
 
-  // FIX: Manage reply states per room
   const handleSetReplyingTo = (msg: ChatMessage | null) => {
       setReplyingTo(msg);
       if (selectedRoomId) {
@@ -517,7 +491,7 @@ export default function Chats() {
   let activeRoom = rooms.find(r => r.room_id === selectedRoomId);
   if (!activeRoom && selectedRoomId) {
       const req = requests.find(r => r.room_id === selectedRoomId);
-      if (req) { isRequest = true; activeRoom = { room_id: req.room_id, type: 'DM', name: req.sender_name, friend_username: req.sender_username, avatar_url: req.sender_avatar, partner_id: req.sender_username, last_message_at: new Date().toISOString(), unread_count: 0 } as Room; }
+      if (req) { isRequest = true; activeRoom = { room_id: req.room_id, type: 'DM', name: req.sender_name, friend_username: req.sender_username, avatar_url: req.sender_avatar, partner_id: req.sender_id, last_message_at: new Date().toISOString(), unread_count: 0 } as Room; }
   }
 
   const isFriend = activeRoom?.friend_username ? friends.some(f => f.username === activeRoom?.friend_username) : false;
@@ -556,7 +530,7 @@ export default function Chats() {
                   if (!targetUsername) return showToast("Cannot remove unknown user", "error");
                   setConfirmConfig({ title: "Remove Friend", desc: `Are you sure you want to remove @${targetUsername}? If you remove them, your chats will be gone forever and cannot be retrieved.`, onConfirm: async () => { try { await api.delete(`/friends/${targetUsername}`).catch(e => { if (e.message && !e.message.includes('Not friends')) throw e; }); await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {}); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("Friend removed and chat deleted.", "success"); } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to remove friend.", "error"); } }}); break;
               case 'block':
-                  setConfirmConfig({ title: "Block User", desc: "They will no longer be able to message you. This chat will be deleted.", onConfirm: async () => { try { await api.post('/match/action', { room_id: targetRoomId, action: 'block', partner_username: targetUsername }); await api.post(`/rooms/${targetRoomId}/reject`).catch(() => {}); setSelectedRoomId(null); setRooms(prev => prev.filter(r => r.room_id !== targetRoomId)); setConfirmConfig(null); showToast("User blocked.", "success"); } catch (e: any) { setConfirmConfig(null); showToast(e.message || "Failed to block user.", "error"); } }}); break;
+                  setConfirmConfig({ title: "Block User", desc: "They will no longer be able to message you. Chat history will remain visible.", onConfirm: async () => { try { await api.post(`/friends/block/${targetUsername}`); setConfirmConfig(null); showToast("User blocked successfully.", "success"); fetchChatsData(); } catch (e: any) { setConfirmConfig(null); showToast(e.response?.data?.message || "Failed to block user.", "error"); } }}); break;
               case 'report': if (targetUsername) setReportConfig({ username: targetUsername, roomId: targetRoomId }); break;
           }
       }
@@ -597,19 +571,96 @@ export default function Chats() {
   };
 
   const handleRequestAction = async (roomId: string, action: 'accept' | 'reject') => {
-    try { await api.post(`/rooms/${roomId}/${action}`); await fetchChatsData(); if (action === 'accept') { setActiveTab('chats'); setSelectedRoomId(roomId); } } 
-    catch (error: any) { showToast(`Failed to ${action} request`, 'error'); }
+    try { 
+        await api.post(`/rooms/${roomId}/${action}`); 
+        await fetchChatsData(); 
+        if (action === 'accept') { 
+            setActiveTab('chats'); 
+            setSelectedRoomId(roomId); 
+        } 
+    } catch (error: any) { 
+        showToast(`Failed to ${action} request`, 'error'); 
+    }
+  };
+
+  const handleJoinFromInviteClick = async (code: string) => {
+    try {
+       const res = await api.post(`/invite/${code}`); 
+       const data = res.data || res;
+       showToast("Joined squad successfully!", 'success'); 
+       await fetchChatsData(); 
+       const newRoomId = data.room_id || data.id || data.groupId;
+       if (newRoomId) { setActiveTab('chats'); setSelectedRoomId(newRoomId); fetchRoomDetails(newRoomId, 'group'); }
+    } catch (error: any) {
+       const msg = error.response?.data?.message || error.message || "Failed to join";
+       if (msg.toLowerCase().includes('already')) showToast("You are already in this squad!", 'info');
+       else showToast(msg, 'error');
+    }
   };
 
   const renderTextWithHighlights = (text: string) => {
-    if (!isSearchingMessages || !messageSearchQuery.trim()) return text;
-    const query = messageSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-    const parts = text.split(new RegExp(`(${query})`, 'gi'));
-    return parts.map((part, i) => part.toLowerCase() === messageSearchQuery.toLowerCase() ? <mark key={i} className="bg-yellow-400 text-gray-900 font-bold rounded-sm px-0.5">{part}</mark> : part);
+    if (!text) return text;
+    if (isSearchingMessages && messageSearchQuery.trim()) {
+      const query = messageSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
+      const parts = text.split(new RegExp(`(${query})`, 'gi'));
+      return parts.map((part, i) => part.toLowerCase() === messageSearchQuery.toLowerCase() ? <mark key={i} className="bg-yellow-400 text-gray-900 font-bold rounded-sm px-0.5">{part}</mark> : part);
+    }
+
+    const zquabInviteRegex = /(https?:\/\/(?:www\.)?zquab\.com\/j\/[a-zA-Z0-9_-]+)/g;
+    if (text.match(zquabInviteRegex)) {
+        const parts = text.split(zquabInviteRegex);
+        return parts.map((part, i) => {
+            const match = part.match(/https?:\/\/(?:www\.)?zquab\.com\/j\/([a-zA-Z0-9_-]+)/);
+            if (match) {
+                const code = match[1];
+                return (
+                    <div key={i} className="mt-2 mb-1 p-3 bg-white dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#272729] shadow-sm flex flex-col gap-2 min-w-[200px]">
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                                <Users size={14} strokeWidth={2.5} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-500">Squad Invite</p>
+                                <p className="text-xs font-bold text-blue-600 dark:text-blue-400 truncate">zquab.com/j/{code}</p>
+                            </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); handleJoinFromInviteClick(code); }} className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-extrabold rounded-lg transition-all shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] active:scale-95">
+                            Join Squad
+                        </button>
+                    </div>
+                );
+            }
+            const stdUrlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+            const subParts = part.split(stdUrlRegex);
+            return subParts.map((subPart, j) => {
+                if (subPart.match(stdUrlRegex)) {
+                    const href = subPart.startsWith('http') ? subPart : `https://${subPart}`;
+                    return <a key={`${i}-${j}`} href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 dark:text-blue-400 underline decoration-blue-400/50 hover:text-white transition-colors" onClick={(e) => e.stopPropagation()}>{subPart}</a>;
+                }
+                return subPart;
+            });
+        });
+    }
+
+    const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        const href = part.startsWith('http') ? part : `https://${part}`;
+        return <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 dark:text-blue-400 underline decoration-blue-400/50 hover:text-white transition-colors" onClick={(e) => e.stopPropagation()}>{part}</a>;
+      }
+      return part;
+    });
   };
 
   return (
     <DashboardLayout>
+      {!isConnected && (
+         <div className="absolute top-0 inset-x-0 bg-red-600 text-white text-[10px] font-bold text-center py-1 z-[999] flex justify-center items-center gap-2 shadow-md animate-in slide-in-from-top duration-300">
+             <WifiOff size={12} /> Reconnecting to chat server...
+         </div>
+      )}
+
       <div className="absolute inset-0 z-10 flex bg-white dark:bg-[#030303] overflow-hidden font-sans transition-colors duration-300 border-t border-gray-200 dark:border-[#272729] md:border-none">
          <ChatSidebar 
             rooms={rooms} requests={requests} groupInvites={groupInvites} callHistory={callHistory} activeTab={activeTab} setActiveTab={setActiveTab} 
@@ -617,7 +668,7 @@ export default function Chats() {
             user={user} formatTime={formatTime} newUsername={newUsername} setNewUsername={setNewUsername} 
             isCreating={isCreating} handleCreateDM={handleCreateDMOrJoin} isLoadingSidebar={isLoadingSidebar}
             handleRequestAction={handleRequestAction} handleGroupInviteAction={handleGroupInviteAction} setShowGroupModal={setShowGroupModal}
-            handleCallLogClick={handleCallLogClick} userMap={userMap}
+            handleCallLogClick={handleCallLogClick} userMap={userMap} 
          />
          
          {activeRoom?.type === 'group' || activeRoom?.type === 'GROUP' ? (
@@ -650,12 +701,7 @@ export default function Chats() {
               showEmojiPicker={showEmojiPicker} setShowEmojiPicker={setShowEmojiPicker} onEmojiClick={onEmojiClick}
               formatTime={formatTime} formatLastSeen={formatLastSeen}
               showInfoPanel={showInfoPanel} setShowInfoPanel={setShowInfoPanel} 
-              onStartCall={handleStartCall} onPanelAction={handlePanelAction} 
-              activeCall={activeCall} endActiveCall={endActiveCall}
-              remoteVideoRef={remoteVideoRef} localVideoRef={localVideoRef}
-              callMicOff={callMicOff} setCallMicOff={setCallMicOff}
-              callCamOff={callCamOff} setCallCamOff={setCallCamOff}
-              localStreamRef={localStreamRef}
+              onPanelAction={handlePanelAction} showToast={showToast}
            />
          )}
       </div>
@@ -726,43 +772,6 @@ export default function Chats() {
         </form>
       </Modal>
 
-      {incomingCall && (() => {
-        let callerName = 'Someone';
-        const fromId = incomingCall.from || incomingCall.callerId || incomingCall.userId;
-        
-        if (fromId && userMap[fromId]) {
-            callerName = userMap[fromId].name || userMap[fromId].username;
-        } else {
-            for (const r of rooms) {
-                const m = r.members?.find((m:any) => m.id === fromId || m.username === fromId);
-                if (m && m.name) { callerName = m.name; break; }
-            }
-        }
-        
-        return (
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-gray-900/60 dark:bg-black/80 backdrop-blur-md animate-in fade-in transition-colors">
-           <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#272729] rounded-[2rem] p-8 md:p-10 flex flex-col items-center shadow-2xl min-w-[320px] animate-in zoom-in-95 transition-colors">
-              <div className="relative mb-6">
-                 <div className="absolute inset-0 bg-blue-400/20 dark:bg-blue-600/30 blur-xl rounded-full animate-pulse"></div>
-                 <div className="w-24 h-24 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-4xl font-extrabold text-blue-600 dark:text-blue-500 shadow-inner border-4 border-blue-200 dark:border-blue-500/20 relative z-10">
-                    {callerName.charAt(0).toUpperCase()}
-                 </div>
-              </div>
-              <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white mb-1 transition-colors">{callerName}</h2>
-              <p className="text-gray-500 dark:text-gray-400 text-sm font-medium mb-8 transition-colors">Incoming {incomingCall.hasVideo ? 'Video' : 'Audio'} Call...</p>
-              
-              <div className="flex gap-6 w-full px-4">
-                 <button onClick={rejectIncomingCall} className="flex-1 h-14 bg-red-600 hover:bg-red-500 rounded-[1.5rem] flex items-center justify-center text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all active:scale-95 hover:-translate-y-0.5">
-                    <PhoneCall size={24} className="rotate-[135deg]" strokeWidth={2.5} />
-                 </button>
-                 <button onClick={() => acceptIncomingCall(callerName)} className="flex-1 h-14 bg-green-500 hover:bg-green-400 rounded-[1.5rem] flex items-center justify-center text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all active:scale-95 animate-bounce hover:-translate-y-0.5">
-                    <PhoneCall size={24} strokeWidth={2.5} />
-                 </button>
-              </div>
-           </div>
-        </div>
-        );
-      })()}
     </DashboardLayout>
   );
 }

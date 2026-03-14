@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, ArrowLeft, Loader2, Reply, Users, Info, Copy, LogOut, Trash2, Shield, UserMinus, Link, Plus, Send, Smile, Clock, Check, CheckCheck, X, Edit2 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useThemeStore } from '../../store/useThemeStore';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import { api } from '../../services/api';
 import Modal from '../Modal';
 
@@ -14,6 +15,7 @@ export const ChatGroupWindow = ({
 }: any) => {
 
   const { theme } = useThemeStore();
+  const { sendMessage } = useWebSocket();
 
   const typingNames = typingData?.userIds.map((id: string) => {
      const member = activeRoom?.members?.find((m: any) => m.id === id);
@@ -45,9 +47,17 @@ export const ChatGroupWindow = ({
   const [editVisibility, setEditVisibility] = useState("public");
   const [isEditing, setIsEditing] = useState(false);
 
+  // --- PHASE 4: Share Invite Modal States ---
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareFriends, setShareFriends] = useState<any[]>([]);
+  const [selectedShareFriends, setSelectedShareFriends] = useState<string[]>([]);
+  const [existingShareIds, setExistingShareIds] = useState<string[]>([]); // ADD THIS LINE
+  const [isSharing, setIsSharing] = useState(false);
+
   useEffect(() => {
      setShowAddModal(false);
      setShowEditModal(false);
+     setShowShareModal(false);
   }, [selectedRoomId]);
 
   const openAddMembersModal = async () => {
@@ -67,11 +77,42 @@ export const ChatGroupWindow = ({
       }
   };
 
-  const toggleFriendSelection = (id: string) => {
-      setSelectedFriends(prev => prev.includes(id) ? prev.filter(fId => fId !== id) : [...prev, id]);
+  const openShareModal = async () => {
+      setShowShareModal(true);
+      setIsLoadingFriends(true);
+      setSelectedShareFriends([]);
+      try {
+          const res = await api.get('/friends');
+          const allFriends = Array.isArray(res) ? res : res.data || [];
+          const existingMemberIds = activeMembers.map((m: any) => m.id);
+          
+          setExistingShareIds(existingMemberIds); // Save who is already in
+          setShareFriends(allFriends); // Show ALL friends
+      } catch (e) {
+          showToast("Failed to load friends", "error");
+      } finally {
+          setIsLoadingFriends(false);
+      }
   };
 
-  // --- PHASE 3 FIX: Smart Add Members Response Handling ---
+  const toggleFriendSelection = (id: string, isShareModal: boolean = false) => {
+      if (isShareModal) {
+          if (existingShareIds.includes(id)) return; // Prevent clicking grayed-out friends
+          setSelectedShareFriends(prev => prev.includes(id) ? prev.filter(fId => fId !== id) : [...prev, id]);
+      } else {
+          setSelectedFriends(prev => prev.includes(id) ? prev.filter(fId => fId !== id) : [...prev, id]);
+      }
+  };
+
+  const selectAllShareFriends = () => {
+      const validFriends = shareFriends.filter(f => !existingShareIds.includes(f.id));
+      if (selectedShareFriends.length === validFriends.length) {
+          setSelectedShareFriends([]); // Deselect all
+      } else {
+          setSelectedShareFriends(validFriends.map(f => f.id)); // Select all valid friends
+      }
+  };
+
   const submitAddMembers = async () => {
       if (selectedFriends.length === 0) return;
       setIsAdding(true);
@@ -101,6 +142,74 @@ export const ChatGroupWindow = ({
       }
   };
 
+  // --- NEW: Submit In-App Share ---
+  // --- PHASE 4 FIX: Robust In-App Share ---
+  // --- PHASE 4 FIX v2: Robust In-App Share (Handles Private Accounts) ---
+  const submitShareInvite = async () => {
+      if (selectedShareFriends.length === 0) return;
+      setIsSharing(true);
+      try {
+          const inviteCode = activeRoomDetails?.inviteCode || activeRoom?.inviteCode;
+          const link = `https://zquab.com/j/${inviteCode}`;
+          const text = `Hey! Join my squad "${activeRoomDetails?.name || activeRoom?.name}":\n\n${link}`;
+          
+          let successCount = 0;
+          let privateCount = 0;
+
+          // Process one friend at a time to prevent WebSocket flooding
+          for (const friendId of selectedShareFriends) {
+              const friend = shareFriends.find(f => f.id === friendId);
+              if (friend) {
+                  try {
+                      // 1. Ensure a DM room exists with this friend
+                      const res = await api.post('/rooms', { username: friend.username });
+                      const data = res.data || res;
+                      
+                      // 2. Handle Private Accounts (DM Request sent instead of active room)
+                      if (data.pending) {
+                         privateCount++;
+                         continue; // Skip sending the WS message since there is no active room yet
+                      }
+
+                      const roomId = data.room_id || data.id;
+                      
+                      // 3. Send the message via WebSocket
+                      if (roomId && sendMessage) {
+                          const tempId = `tmp_share_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                          sendMessage(roomId, text, tempId);
+                          successCount++;
+                          
+                          // 4. Crucial: Wait 300ms before sending the next one so the backend doesn't drop frames!
+                          await new Promise(r => setTimeout(r, 300)); 
+                      }
+                  } catch (err) {
+                      console.error(`Failed to share with ${friend.name}`, err);
+                  }
+              }
+          }
+          
+          // Show accurate success toast based on what happened
+          if (successCount > 0 && privateCount > 0) {
+             showToast(`Sent to ${successCount} friends. ${privateCount} are private.`, "success");
+          } else if (successCount > 0) {
+             showToast(`Invite link sent to ${successCount} friends!`, "success");
+          } else if (privateCount > 0) {
+             showToast(`Sent DM requests to ${privateCount} private friends.`, "info");
+          } else {
+             showToast("Failed to send invites.", "error");
+          }
+          
+          setShowShareModal(false);
+          setSelectedShareFriends([]); // Reset selection
+          
+          // Force the sidebar to pull the latest messages from the DB
+          setTimeout(() => refreshChats(), 1000);
+
+      } catch(e) {
+          showToast("A network error occurred.", "error");
+          setIsSharing(false);
+      } 
+  };
   const openEditModal = () => {
       setEditName(activeRoomDetails?.name || activeRoom?.name || "");
       setEditAvatarUrl(activeRoomDetails?.avatarUrl || activeRoom?.avatar_url || "");
@@ -323,9 +432,10 @@ export const ChatGroupWindow = ({
                  </div>
 
                  <div className="flex flex-col pb-6">
-                    {/* Admin Actions */}
+                    
+                    {/* Admin Actions: Edit & Add Members */}
                     {amIAdmin && (
-                      <div className="p-4 border-b border-gray-200 dark:border-[#272729] space-y-3 transition-colors">
+                      <div className="px-4 pt-4 pb-2 space-y-3 transition-colors">
                         <div className="flex gap-2">
                             <button onClick={openEditModal} className="flex-1 bg-gray-50 dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#272729] hover:bg-gray-100 dark:hover:bg-[#272729] text-gray-700 dark:text-gray-300 font-extrabold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 text-xs shadow-sm hover:shadow-md">
                                <Edit2 size={16} strokeWidth={2.5} /> Edit
@@ -334,16 +444,55 @@ export const ChatGroupWindow = ({
                                <Plus size={16} strokeWidth={3} /> Add Members
                             </button>
                         </div>
-                        
-                        <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#272729] p-3 flex items-center justify-between group cursor-pointer hover:border-blue-400 dark:hover:border-gray-600 transition-colors shadow-sm" onClick={() => onPanelAction('generate_invite')}>
-                           <div className="flex items-center gap-3 overflow-hidden">
-                              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-500 flex items-center justify-center shrink-0 border border-blue-200 dark:border-transparent"><Link size={16} strokeWidth={2.5} /></div>
+                      </div>
+                    )}
+
+                    {/* Invite Link Block (Visible to admins, OR to members if a code already exists) */}
+                    {(amIAdmin || activeRoomDetails?.inviteCode) && (
+                      <div className={`px-4 ${amIAdmin ? 'pb-4' : 'py-4'} border-b border-gray-200 dark:border-[#272729] transition-colors`}>
+                        <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#272729] p-3 flex flex-col gap-3 group shadow-sm hover:border-blue-400 dark:hover:border-gray-600 transition-colors">
+                           <div 
+                              className={`flex items-center gap-3 overflow-hidden ${!activeRoomDetails?.inviteCode && amIAdmin ? 'cursor-pointer' : ''}`} 
+                              onClick={() => { if(!activeRoomDetails?.inviteCode && amIAdmin) onPanelAction('generate_invite') }}
+                           >
+                              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-500 flex items-center justify-center shrink-0 border border-blue-200 dark:border-transparent">
+                                <Link size={16} strokeWidth={2.5} />
+                              </div>
                               <div className="truncate">
-                                 <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 truncate">{activeRoomDetails?.inviteCode ? `inv_${activeRoomDetails.inviteCode}` : 'Generate Invite Link'}</p>
-                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 truncate mt-0.5">Share to let others join</p>
+                                 <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 truncate">
+                                   {activeRoomDetails?.inviteCode ? `zquab.com/j/${activeRoomDetails.inviteCode}` : 'Generate Invite Link'}
+                                 </p>
+                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 truncate mt-0.5">
+                                   {activeRoomDetails?.inviteCode ? 'Invite others to join' : 'Create link to let others join'}
+                                 </p>
                               </div>
                            </div>
-                           <Copy size={18} strokeWidth={2.5} className="text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white transition-colors" />
+                           
+                           {/* Only show actions if a code actually exists */}
+                           {activeRoomDetails?.inviteCode && (
+                             <div className="flex items-center gap-2 pt-2 border-t border-gray-200 dark:border-[#272729]">
+                                <button 
+                                  onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(`https://zquab.com/j/${activeRoomDetails.inviteCode}`);
+                                      showToast("Invite link copied to clipboard!", "success");
+                                  }}
+                                  className="flex-1 py-2 bg-white dark:bg-[#272729] hover:bg-gray-100 dark:hover:bg-[#343536] text-gray-700 dark:text-gray-300 text-[11px] font-extrabold rounded-lg border border-gray-200 dark:border-transparent flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                >
+                                  <Copy size={14} strokeWidth={2.5} /> Copy Link
+                                </button>
+                                
+                                <button 
+                                  onClick={(e) => {
+                                      e.stopPropagation();
+                                      openShareModal(); 
+                                  }}
+                                  className="flex-1 py-2 bg-blue-50 dark:bg-blue-600/10 hover:bg-blue-100 dark:hover:bg-blue-600/20 text-blue-600 dark:text-blue-400 text-[11px] font-extrabold rounded-lg border border-blue-100 dark:border-transparent flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                >
+                                  <Send size={14} strokeWidth={2.5} /> Share in App
+                                </button>
+                             </div>
+                           )}
                         </div>
                       </div>
                     )}
@@ -450,6 +599,70 @@ export const ChatGroupWindow = ({
                       </div>
                    ))}
                 </div>
+            )}
+         </div>
+      </Modal>
+
+      {/* --- IN-APP SHARE MODAL --- */}
+      <Modal isOpen={showShareModal} onClose={() => setShowShareModal(false)} title="Share Invite Link"
+         footer={
+            <>
+               <button onClick={() => setShowShareModal(false)} className="px-5 py-3 text-sm font-extrabold text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+               <button onClick={submitShareInvite} disabled={selectedShareFriends.length === 0 || isSharing} className="px-6 py-3 bg-blue-600 disabled:opacity-50 text-white text-sm font-extrabold rounded-2xl hover:bg-blue-500 flex items-center gap-2 shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)] transition-all hover:-translate-y-0.5">
+                  {isSharing ? <Loader2 size={16} className="animate-spin" strokeWidth={3} /> : <Send size={16} strokeWidth={2.5} />} Send to {selectedShareFriends.length > 0 ? `(${selectedShareFriends.length})` : ''}
+               </button>
+            </>
+         }
+      >
+         <div className="max-h-72 overflow-y-auto scrollbar-hide pr-1 py-2">
+            {isLoadingFriends ? (
+                <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-blue-600 dark:text-blue-500" strokeWidth={3} /></div>
+            ) : shareFriends.length === 0 ? (
+                <div className="text-center p-6 bg-gray-50 dark:bg-[#0a0a0a] rounded-2xl border-2 border-dashed border-gray-200 dark:border-[#272729]">
+                   <p className="text-gray-500 font-bold text-sm">No friends available to share.</p>
+                </div>
+            ) : (
+                <>
+                   <div className="flex justify-between items-center mb-4 px-2">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Select Friends</p>
+                      <button onClick={selectAllShareFriends} className="text-xs font-extrabold text-blue-600 dark:text-blue-400 hover:text-blue-500 transition-colors">
+                        {selectedShareFriends.length === shareFriends.length && shareFriends.length > 0 ? 'Deselect All' : 'Select All'}
+                      </button>
+                   </div>
+                   <div className="space-y-2.5">
+                      {shareFriends.map(friend => {
+                         const isAlreadyIn = existingShareIds.includes(friend.id);
+                         const isSelected = selectedShareFriends.includes(friend.id);
+                         
+                         return (
+                           <div key={friend.id} onClick={() => toggleFriendSelection(friend.id, true)} className={`flex items-center justify-between p-3.5 rounded-2xl transition-all border-2 shadow-sm ${isAlreadyIn ? 'opacity-50 bg-gray-50 dark:bg-[#1a1a1a] border-gray-200 dark:border-[#272729] cursor-not-allowed' : isSelected ? 'bg-blue-50 dark:bg-white/10 border-blue-500 dark:border-white/20 cursor-pointer' : 'bg-gray-50 dark:bg-[#1a1a1a] border-gray-200 dark:border-[#272729] hover:border-gray-300 dark:hover:border-gray-600 cursor-pointer'}`}>
+                              <div className="flex items-center gap-3.5">
+                                 <div className="w-10 h-10 rounded-[1rem] bg-gray-200 dark:bg-gray-800 overflow-hidden border border-gray-300 dark:border-transparent shrink-0 flex items-center justify-center font-extrabold text-gray-500 dark:text-gray-300">
+                                    {friend.avatar_url ? (
+                                       <img src={friend.avatar_url} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                       friend.name?.charAt(0) || 'F'
+                                    )}
+                                 </div>
+                                 <div>
+                                    <p className="text-sm font-extrabold text-gray-900 dark:text-white leading-tight">{friend.name}</p>
+                                    <p className="text-[10px] font-bold text-gray-500 mt-0.5">@{friend.username}</p>
+                                 </div>
+                              </div>
+                              
+                              {/* Show "In Squad" if already joined, otherwise show Checkbox */}
+                              {isAlreadyIn ? (
+                                 <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest px-2">In Squad</span>
+                              ) : (
+                                 <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600 text-white shadow-[inset_0_2px_4px_rgba(255,255,255,0.4)]' : 'border-gray-300 dark:border-gray-600'}`}>
+                                    {isSelected && <Check size={14} strokeWidth={3} />}
+                                 </div>
+                              )}
+                           </div>
+                         )
+                      })}
+                   </div>
+                </>
             )}
          </div>
       </Modal>
