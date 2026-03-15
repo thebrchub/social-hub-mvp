@@ -7,7 +7,6 @@ export const GlobalCallFloater = () => {
   const { subscribe, sendRaw } = useWebSocket();
   const user = useAuthStore(state => state.user);
 
-  // --- MOBILE DETECTION ---
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
       const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -16,7 +15,6 @@ export const GlobalCallFloater = () => {
       return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // --- TOAST STATE ---
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error' | 'info' | 'warning'} | null>(null);
   const showToast = (msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
     setToast({ msg, type });
@@ -37,9 +35,22 @@ export const GlobalCallFloater = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  
+  // FIX: Persistent Remote Stream Reference to prevent React from wiping it during UI updates
+  const remoteStreamRef = useRef<MediaStream>(new MediaStream());
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
   const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
   const outgoingAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // FIX: Relentless Auto-Binder for global calls
+  useEffect(() => {
+    if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+    }
+    if (remoteVideoRef.current && remoteStreamRef.current.getTracks().length > 0 && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    }
+  }); 
 
   const playSound = (type: 'ring_in' | 'ring_out') => {
       try {
@@ -50,7 +61,7 @@ export const GlobalCallFloater = () => {
              if (!outgoingAudioRef.current) { outgoingAudioRef.current = new Audio('/ringtone.mp3'); outgoingAudioRef.current.loop = true; }
              outgoingAudioRef.current.play().catch(() => {});
           }
-      } catch (e) { console.error("Sound play failed", e); }
+      } catch (e) {}
   };
 
   const stopAllRingtones = () => {
@@ -64,6 +75,7 @@ export const GlobalCallFloater = () => {
       if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+      remoteStreamRef.current = new MediaStream(); // Wipe remote stream
       
       if (activeCall) {
           if (reason === 'rejected') showToast(`Call declined by ${activeCall.peerName}`, 'warning');
@@ -77,7 +89,9 @@ export const GlobalCallFloater = () => {
       window.dispatchEvent(new CustomEvent('REFRESH_CHATS'));
   };
 
-  // FIX #1 & #2: High Quality Media fetching
+  // Helper for bulletproof JSON parsing
+  const getParsedData = (data: any) => typeof data === 'string' ? JSON.parse(data) : data;
+
   const getMedia = async (video: boolean) => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -99,20 +113,34 @@ export const GlobalCallFloater = () => {
           bundlePolicy: 'max-bundle'
       });
       pcRef.current = pc; iceCandidateQueue.current = [];
-      pc.onicecandidate = (e) => { if (e.candidate) sendRaw({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); };
-      pc.ontrack = (e) => { 
-          const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-          if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = stream; 
-              remoteVideoRef.current.play().catch(console.error); // Force play
-          }
+      
+      pc.onicecandidate = (e) => { 
+          if (e.candidate) sendRaw({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); 
       };
+      
+      // FIX: Push tracks into persistent MediaStream
+      pc.ontrack = (event) => {
+      // 1. Properly check for streams using standard if/else
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
+      } else {
+        remoteStreamRef.current.addTrack(event.track);
+      }
+
+      // 2. Attach the stream to the video element and force play
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+    };
+      
       pc.oniceconnectionstatechange = () => { 
-          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed' || pc.iceConnectionState === 'disconnected') {
               if (pc.iceConnectionState === 'failed') endActiveCall('error');
               else endActiveCall('ended');
           }
       };
+      
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
       return pc;
   };
@@ -127,11 +155,6 @@ export const GlobalCallFloater = () => {
           const callId = `call_${Date.now()}`;
           setActiveCall({ id: callId, roomId, peerName, peerAvatar, isVideo: type === 'video', peerId, isAccepted: false });
           setIsMinimized(false);
-
-          // FIX #3: Ensure the video ref is loaded before attaching stream
-          setTimeout(() => {
-             if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-          }, 100);
           
           sendRaw({ 
               type: 'call_ring', 
@@ -169,7 +192,8 @@ export const GlobalCallFloater = () => {
          
          if (parsed.type === 'call_offer') {
              initPeerConnection(parsed.from, parsed.callId).then(pc => {
-                 pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp))).then(() => {
+                 const sdpData = getParsedData(parsed.sdp);
+                 pc.setRemoteDescription(new RTCSessionDescription(sdpData)).then(() => {
                      pc.createAnswer().then(answer => {
                          pc.setLocalDescription(answer);
                          sendRaw({ type: 'call_answer', to: parsed.from, callId: parsed.callId, sdp: JSON.stringify(answer) });
@@ -181,15 +205,16 @@ export const GlobalCallFloater = () => {
          }
          
          if (parsed.type === 'call_answer' && pcRef.current) {
-             pcRef.current.setRemoteDescription(new RTCSessionDescription(JSON.parse(parsed.sdp)));
+             const sdpData = getParsedData(parsed.sdp);
+             pcRef.current.setRemoteDescription(new RTCSessionDescription(sdpData));
              iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c))); 
              iceCandidateQueue.current = [];
          }
          
          if (parsed.type === 'ice_candidate') {
-             const candidate = JSON.parse(parsed.candidate);
-             if (pcRef.current && pcRef.current.remoteDescription) pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)); 
-             else iceCandidateQueue.current.push(candidate);
+             const candObj = getParsedData(parsed.candidate);
+             if (pcRef.current && pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) pcRef.current.addIceCandidate(new RTCIceCandidate(candObj)); 
+             else iceCandidateQueue.current.push(candObj);
          }
       });
       return unsub;
@@ -197,21 +222,13 @@ export const GlobalCallFloater = () => {
 
   const acceptIncomingCall = async () => {
       stopAllRingtones(); const parsed = incomingCall; setIncomingCall(null);
-      
       const stream = await getMedia(parsed.hasVideo);
       if (!stream) { 
           sendRaw({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' }); 
           return; 
       }
-
-      // FIX #3: Setup state FIRST so DOM renders, then attach video
       setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: parsed.callerName || 'User', peerAvatar: parsed.callerAvatar, isVideo: parsed.hasVideo, peerId: parsed.from, isAccepted: true });
       setIsMinimized(false);
-
-      setTimeout(() => {
-         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      }, 100);
-
       sendRaw({ type: 'call_accept', to: parsed.from, callId: parsed.callId });
       showToast("Call started", "success");
   };
@@ -319,7 +336,7 @@ export const GlobalCallFloater = () => {
             }
           `}
       >
-          {/* --- 1. MOBILE MINIMIZED (WhatsApp Style Top Bar) --- */}
+          {/* --- 1. MOBILE MINIMIZED --- */}
           {isMinimized && isMobile && (
              <>
                 <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={() => setIsMinimized(false)}>
@@ -334,10 +351,6 @@ export const GlobalCallFloater = () => {
                 <div className="flex items-center gap-3 shrink-0">
                    <button onTouchStart={(e) => { e.stopPropagation(); setCallMicOff(!callMicOff); if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = callMicOff); }} className={`p-2.5 rounded-full ${callMicOff ? 'bg-white text-black' : 'bg-gray-800 text-white'}`}><MicOff size={16} strokeWidth={2.5}/></button>
                    <button onTouchStart={(e) => { e.stopPropagation(); endActiveCall(); }} className="p-2.5 bg-red-600 rounded-full text-white"><Phone size={16} strokeWidth={2.5} className="rotate-[135deg]" /></button>
-                </div>
-                <div className="opacity-0 absolute pointer-events-none w-px h-px overflow-hidden">
-                    <video ref={remoteVideoRef} autoPlay playsInline />
-                    {activeCall?.isVideo && <video ref={localVideoRef} autoPlay playsInline muted />}
                 </div>
              </>
           )}
@@ -362,11 +375,11 @@ export const GlobalCallFloater = () => {
                   </div>
                )}
 
-               {/* --- UPGRADED VIDEO AREA --- */}
-               <div className={`relative flex flex-col md:flex-row items-center justify-center bg-black ${isMinimized ? 'h-36' : 'flex-1'}`}>
+               {/* --- UPGRADED VIDEO AREA (Perfect Side-by-Side on Desktop) --- */}
+               <div className={`relative flex items-center justify-center bg-black ${isMinimized ? 'h-36 flex-col md:flex-row' : 'flex-1 flex-col md:flex-row w-full h-full'}`}>
                    
                    {/* REMOTE VIDEO (Stranger) */}
-                   <div className={`${isMinimized ? 'w-full h-full' : 'flex-1 h-full w-full'} relative`}>
+                   <div className={`relative ${isMinimized ? 'w-full h-full' : 'flex-1 h-full w-full border-b md:border-b-0 md:border-r border-white/5'}`}>
                        <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${!activeCall?.isVideo ? 'opacity-0 absolute pointer-events-none' : ''}`} />
                        {activeCall?.isVideo && !isMinimized && <div className="absolute bottom-4 left-4 bg-black/40 px-2 py-1 rounded text-[10px] text-white font-bold uppercase tracking-widest z-10">Stranger</div>}
                    </div>
@@ -385,7 +398,7 @@ export const GlobalCallFloater = () => {
                                ? 'absolute bottom-2 right-2 w-16 h-24 rounded-lg z-20 shadow-2xl' 
                                : isMobile 
                                  ? 'absolute bottom-28 right-6 w-28 h-40 rounded-2xl z-20 shadow-2xl' // Floating PiP on Mobile
-                                 : 'flex-1 h-full w-full relative border-l border-white/10' // Side-by-Side on Laptop
+                                 : 'flex-1 h-full w-full relative' // Side-by-Side on Laptop
                            } overflow-hidden bg-gray-900 transition-all duration-300
                        `}>
                           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
