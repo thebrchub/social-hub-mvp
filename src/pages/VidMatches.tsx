@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
-import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare,  X, Columns, Smile, Ban } from 'lucide-react';
+import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare,  X, Columns, Smile, Ban} from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
@@ -63,6 +63,10 @@ const VidMatches = () => {
   const wsRef = useRef<any>(null); 
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
 
+  // THE TIE-BREAKER: Used to randomly decide who initiates the call
+  const myTieBreaker = useRef(Math.random());
+
+  // Relentless Auto-Binder
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
@@ -110,6 +114,7 @@ const VidMatches = () => {
     activeRemoteStream.current = null; 
     setRoomSync(null);
     setPeerSync(null);
+    myTieBreaker.current = Math.random(); // Reset tie-breaker for next match
   };
 
   const handlePeerDisconnected = async () => {
@@ -176,16 +181,27 @@ const VidMatches = () => {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && wsRef.current) {
-        wsRef.current({ type: 'ice_candidate', roomId: roomId, room_id: roomId, to: targetUserId, callId: roomId, candidate: JSON.stringify(event.candidate) });
+        wsRef.current({ 
+          type: 'ice_candidate', 
+          roomId: roomId, 
+          room_id: roomId, 
+          to: targetUserId, 
+          callId: roomId, 
+          candidate: JSON.stringify(event.candidate) 
+        });
       }
     };
 
+    // PROPER TRACK HANDLING
     pc.ontrack = (event) => {
-      const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
-      activeRemoteStream.current = stream;
+      if (!activeRemoteStream.current) {
+        activeRemoteStream.current = new MediaStream();
+      }
+      // Add incoming track to our persistent stream
+      activeRemoteStream.current.addTrack(event.track);
       
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
+      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== activeRemoteStream.current) {
+        remoteVideoRef.current.srcObject = activeRemoteStream.current;
         remoteVideoRef.current.play().catch(() => {});
       }
     };
@@ -251,7 +267,6 @@ const VidMatches = () => {
     } catch (error) { alert(`Failed action`); } finally { setIsProcessingAction(false); }
   };
 
-  // --- RESTORED EXECUTE REPORT ---
   const executeReport = async () => {
     if (!activeRoomIdRef.current || !reportReason.trim()) return;
     setIsProcessingAction(true);
@@ -296,26 +311,25 @@ const VidMatches = () => {
         const partnerId = parsed.peerId || parsed.partnerId || parsed.partner_id || parsed.partner_username || 'stranger';
         if (partnerId !== 'stranger') setPeerSync(partnerId);
 
-        let isInitiator = parsed.initiator || parsed.isInitiator;
-        if (typeof isInitiator !== 'boolean') {
-           isInitiator = (user?.id && partnerId !== 'stranger' && String(user.id).localeCompare(String(partnerId)) < 0);
-        }
+        // STEP 1: Ping the room to negotiate who calls who
+        wsRef.current({ 
+          type: 'webrtc_hello', 
+          roomId: roomId, 
+          room_id: roomId, 
+          token: myTieBreaker.current 
+        });
+      }
 
-        if (isInitiator) {
-            const pc = await createPeerConnection(partnerId, roomId);
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            wsRef.current({ type: 'call_offer', roomId: roomId, room_id: roomId, to: partnerId, callId: roomId, sdp: JSON.stringify(offer) });
+      // STEP 2: The Handshake. If my token is bigger, I am the Caller. If yours is bigger, I wait for your call.
+      if (parsed.type === 'webrtc_hello' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
+        if (myTieBreaker.current > parsed.token) {
+           console.log("I won the tie-breaker! Initiating WebRTC Call...");
+           const pc = await createPeerConnection('stranger', currentRoomId!);
+           const offer = await pc.createOffer();
+           await pc.setLocalDescription(offer);
+           wsRef.current({ type: 'call_offer', roomId: currentRoomId, room_id: currentRoomId, callId: currentRoomId, sdp: JSON.stringify(offer) });
         } else {
-            setTimeout(async () => {
-                if (pcRef.current?.signalingState === 'stable' || !pcRef.current) {
-                    console.warn("Safety Override: Forcing WebRTC Offer because stranger didn't initiate.");
-                    const pc = await createPeerConnection(partnerId, roomId);
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    wsRef.current({ type: 'call_offer', roomId: roomId, room_id: roomId, to: partnerId, callId: roomId, sdp: JSON.stringify(offer) });
-                }
-            }, 4000);
+           console.log("Stranger won the tie-breaker. Waiting for their offer...");
         }
       }
 
