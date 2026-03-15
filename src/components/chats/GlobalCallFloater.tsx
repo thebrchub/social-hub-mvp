@@ -7,6 +7,7 @@ export const GlobalCallFloater = () => {
   const { subscribe, sendRaw } = useWebSocket();
   const user = useAuthStore(state => state.user);
 
+  // --- MOBILE DETECTION ---
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
       const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -36,13 +37,13 @@ export const GlobalCallFloater = () => {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   
-  // FIX: Persistent Remote Stream Reference to prevent React from wiping it during UI updates
   const remoteStreamRef = useRef<MediaStream>(new MediaStream());
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
   const incomingAudioRef = useRef<HTMLAudioElement | null>(null);
   const outgoingAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // FIX: Relentless Auto-Binder for global calls
+  // FIX 1: THE RELENTLESS AUTO-BINDER
+  // This guarantees that even if React re-renders the layout, the video streams never drop!
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
@@ -89,7 +90,6 @@ export const GlobalCallFloater = () => {
       window.dispatchEvent(new CustomEvent('REFRESH_CHATS'));
   };
 
-  // Helper for bulletproof JSON parsing
   const getParsedData = (data: any) => typeof data === 'string' ? JSON.parse(data) : data;
 
   const getMedia = async (video: boolean) => {
@@ -118,21 +118,17 @@ export const GlobalCallFloater = () => {
           if (e.candidate) sendRaw({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); 
       };
       
-      // FIX: Push tracks into persistent MediaStream
-      pc.ontrack = (event) => {
-      // 1. Properly check for streams using standard if/else
-      if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
-      } else {
-        remoteStreamRef.current.addTrack(event.track);
-      }
-
-      // 2. Attach the stream to the video element and force play
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStreamRef.current;
-        remoteVideoRef.current.play().catch(() => {});
-      }
-    };
+      pc.ontrack = (event) => { 
+          if (event.streams && event.streams[0]) {
+             event.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
+          } else {
+             remoteStreamRef.current.addTrack(event.track);
+          }
+          if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = remoteStreamRef.current;
+              remoteVideoRef.current.play().catch(() => {});
+          }
+      };
       
       pc.oniceconnectionstatechange = () => { 
           if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed' || pc.iceConnectionState === 'disconnected') {
@@ -375,34 +371,42 @@ export const GlobalCallFloater = () => {
                   </div>
                )}
 
-               {/* --- UPGRADED VIDEO AREA (Perfect Side-by-Side on Desktop) --- */}
-               <div className={`relative flex items-center justify-center bg-black ${isMinimized ? 'h-36 flex-col md:flex-row' : 'flex-1 flex-col md:flex-row w-full h-full'}`}>
+               {/* --- FIX 2: UPGRADED VIDEO AREA (Side-by-Side on Desktop, Full/PiP on Mobile) --- */}
+               <div className={`flex-1 flex p-2 md:p-8 pt-20 md:pt-24 gap-4 md:gap-6 overflow-hidden relative pb-28 md:pb-32 ${isMobile ? 'flex-col items-center justify-center' : 'flex-row items-center justify-center'}`}>
                    
                    {/* REMOTE VIDEO (Stranger) */}
-                   <div className={`relative ${isMinimized ? 'w-full h-full' : 'flex-1 h-full w-full border-b md:border-b-0 md:border-r border-white/5'}`}>
-                       <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${!activeCall?.isVideo ? 'opacity-0 absolute pointer-events-none' : ''}`} />
-                       {activeCall?.isVideo && !isMinimized && <div className="absolute bottom-4 left-4 bg-black/40 px-2 py-1 rounded text-[10px] text-white font-bold uppercase tracking-widest z-10">Stranger</div>}
+                   <div className={`relative w-full rounded-[2rem] overflow-hidden bg-[#111] border border-white/10 shadow-inner ${isMobile ? 'flex-1' : 'h-full flex-1'}`}>
+                       <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${!activeCall?.isVideo ? 'opacity-0' : ''}`} />
+                       {activeCall?.isVideo && !isMinimized && <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-lg text-[10px] text-white font-extrabold tracking-widest z-20">{activeCall?.peerName || 'Stranger'}</div>}
+                       
+                       {/* AUDIO PLACEHOLDER */}
+                       {!activeCall?.isVideo && (
+                          <div className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${isMinimized ? 'w-16 h-16 text-2xl' : 'w-40 h-40 md:w-48 md:h-48 text-6xl md:text-7xl'} rounded-full bg-gray-800 flex items-center justify-center font-extrabold text-white shadow-2xl overflow-hidden ${activeCall?.isAccepted ? 'border-4 border-green-500/50' : 'animate-pulse border-4 border-blue-500/30'} z-10`}>
+                              {activeCall?.peerAvatar ? <img src={activeCall.peerAvatar} className="w-full h-full object-cover" alt="avatar"/> : activeCall?.peerName?.charAt(0).toUpperCase()}
+                          </div>
+                       )}
                    </div>
                    
-                   {/* AUDIO PLACEHOLDER */}
-                   {!activeCall?.isVideo && (
-                      <div className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${isMinimized ? 'w-16 h-16 text-2xl' : 'w-40 h-40 md:w-48 md:h-48 text-6xl md:text-7xl'} rounded-full bg-gray-800 flex items-center justify-center font-extrabold text-white shadow-2xl overflow-hidden ${activeCall?.isAccepted ? 'border-4 border-green-500/50' : 'animate-pulse border-4 border-blue-500/30'} z-10`}>
-                          {activeCall?.peerAvatar ? <img src={activeCall.peerAvatar} className="w-full h-full object-cover" alt="avatar"/> : activeCall?.peerName?.charAt(0).toUpperCase()}
-                      </div>
-                   )}
-                   
                    {/* LOCAL VIDEO (You) */}
-                   {activeCall?.isVideo && !callCamOff && (
+                   {activeCall?.isVideo && (
                        <div className={`
-                           ${isMinimized 
-                               ? 'absolute bottom-2 right-2 w-16 h-24 rounded-lg z-20 shadow-2xl' 
-                               : isMobile 
-                                 ? 'absolute bottom-28 right-6 w-28 h-40 rounded-2xl z-20 shadow-2xl' // Floating PiP on Mobile
-                                 : 'flex-1 h-full w-full relative' // Side-by-Side on Laptop
+                           ${isMobile 
+                               ? 'absolute bottom-32 right-6 w-28 h-40 md:w-32 md:h-48 rounded-2xl z-30 shadow-2xl border border-white/20' // Floating PiP on Mobile
+                               : 'relative w-full h-full rounded-[2rem] border border-white/10 shadow-inner flex-1' // Side-by-Side on Laptop
                            } overflow-hidden bg-gray-900 transition-all duration-300
                        `}>
-                          <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
-                          {!isMinimized && <div className="absolute bottom-4 left-4 bg-blue-600/60 px-2 py-1 rounded text-[10px] text-white font-bold uppercase tracking-widest z-10">You</div>}
+                          <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] ${callCamOff ? 'opacity-0' : ''}`} />
+                          
+                          {!isMobile && !isMinimized && <div className="absolute bottom-4 left-4 bg-blue-600/80 backdrop-blur-md border border-white/20 px-3 py-1.5 rounded-lg text-[10px] text-white font-extrabold tracking-widest z-20">YOU</div>}
+                          
+                          {callCamOff && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-10">
+                              <div className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-white/5 flex items-center justify-center mb-3 border border-transparent">
+                                 <VideoOff size={isMobile ? 24 : 32} className="text-gray-500" strokeWidth={2.5} />
+                              </div>
+                              {!isMobile && <span className="text-gray-500 text-xs font-bold uppercase tracking-widest">Camera Disabled</span>}
+                            </div>
+                          )}
                        </div>
                    )}
                </div>
@@ -416,10 +420,12 @@ export const GlobalCallFloater = () => {
                )}
 
                {/* Control Bar */}
-               <div className={`flex items-center justify-center gap-4 md:gap-6 z-30 ${isMinimized ? 'py-3 bg-black/80 absolute bottom-0 w-full' : 'absolute inset-x-0 bottom-0 pb-10 pt-32 bg-gradient-to-t from-black via-black/80 to-transparent'}`}>
-                  <button onMouseDown={(e) => { e.stopPropagation(); setCallMicOff(!callMicOff); if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = callMicOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callMicOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><MicOff size={isMinimized ? 16 : 24} /></button>
-                  {activeCall?.isVideo && (<button onMouseDown={(e) => { e.stopPropagation(); setCallCamOff(!callCamOff); if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach(t => t.enabled = callCamOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callCamOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><VideoOff size={isMinimized ? 16 : 24} /></button>)}
-                  <button onMouseDown={(e) => { e.stopPropagation(); endActiveCall(); }} onTouchStart={(e) => e.stopPropagation()} className={`bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-white transition-transform active:scale-95 ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16 shadow-[0_0_20px_rgba(220,38,38,0.4)]'}`}><Phone size={isMinimized ? 16 : 28} className="rotate-[135deg]" /></button>
+               <div className={`flex items-center justify-center gap-4 md:gap-6 z-30 ${isMinimized ? 'py-3 bg-black/80 absolute bottom-0 w-full' : 'absolute inset-x-0 bottom-0 pb-10 pt-32 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none'}`}>
+                  <div className="pointer-events-auto flex items-center gap-4 md:gap-6">
+                    <button onMouseDown={(e) => { e.stopPropagation(); setCallMicOff(!callMicOff); if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = callMicOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callMicOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><MicOff size={isMinimized ? 16 : 24} /></button>
+                    {activeCall?.isVideo && (<button onMouseDown={(e) => { e.stopPropagation(); setCallCamOff(!callCamOff); if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach(t => t.enabled = callCamOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callCamOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><VideoOff size={isMinimized ? 16 : 24} /></button>)}
+                    <button onMouseDown={(e) => { e.stopPropagation(); endActiveCall(); }} onTouchStart={(e) => e.stopPropagation()} className={`bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-white transition-transform active:scale-95 ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16 shadow-[0_0_20px_rgba(220,38,38,0.4)]'}`}><Phone size={isMinimized ? 16 : 28} className="rotate-[135deg]" /></button>
+                  </div>
                </div>
              </>
           )}
