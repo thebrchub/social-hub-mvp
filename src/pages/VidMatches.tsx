@@ -16,6 +16,7 @@ const VidMatches = () => {
   const { theme } = useThemeStore();
   const { subscribe, sendMessage, sendRaw } = useWebSocket();
 
+  // --- UI Layout States ---
   const [layoutMode, setLayoutMode] = useState<'stacked' | 'split'>(() => {
     if (typeof window !== 'undefined') return (localStorage.getItem('vidMatches_layoutMode') as 'stacked' | 'split') || 'split';
     return 'split';
@@ -37,6 +38,7 @@ const VidMatches = () => {
   useEffect(() => localStorage.setItem('vidMatches_layoutMode', layoutMode), [layoutMode]);
   useEffect(() => localStorage.setItem('vidMatches_showChat', String(showChat)), [showChat]);
 
+  // --- Match & WebRTC States ---
   const [matchState, setMatchState] = useState<MatchState>('welcome');
   const [slideState, setSlideState] = useState<'idle' | 'sliding-out' | 'sliding-in'>('idle');
   
@@ -103,7 +105,7 @@ const VidMatches = () => {
     setPeerSync(null);
   };
 
-  // FIX #5: Bulletproof reconnect loop. If the stranger drops, we immediately search again.
+  // FIX: The auto-reconnect loop if stranger disconnects
   const handlePeerDisconnected = async () => {
     if (matchState !== 'matched') return;
     setChatMessages(prev => [...prev, { sender: 'system', text: 'Stranger left. Finding a new match...' }]);
@@ -113,7 +115,6 @@ const VidMatches = () => {
     try {
       await api.post('/match/leave', {});
       await api.post('/match/enter', {});
-      
       setTimeout(() => {
         setMatchState('searching');
         setSlideState('idle');
@@ -148,9 +149,9 @@ const VidMatches = () => {
     }
 
     try {
-      // FIX #2: "ideal" keyword ensures HD (720p) if possible, but falls back to SD instead of crashing
+      // FIX: HD Quality constraints
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, 
+        video: { width: { min: 640, ideal: 1280, max: 1920 }, height: { min: 480, ideal: 720, max: 1080 }, facingMode: "user" }, 
         audio: { echoCancellation: true, noiseSuppression: true } 
       });
 
@@ -161,11 +162,11 @@ const VidMatches = () => {
     } catch (err: any) {
       console.error("Camera/Mic access failed:", err);
       if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setMediaError({ title: "Hardware Missing", desc: "No camera or microphone was detected by your browser.", action: "Check if your webcam is plugged in. If on a laptop, ensure the physical camera switch on the side or keyboard is turned ON." });
+        setMediaError({ title: "Hardware Missing", desc: "No camera or microphone detected.", action: "Check if your webcam is plugged in or if your laptop camera switch is ON." });
       } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the 'Lock' icon in your browser's URL bar, change Camera/Mic to 'Allow', and refresh the page." });
+        setMediaError({ title: "Permission Denied", desc: "You blocked access to the camera or microphone.", action: "Click the 'Lock' icon in your URL bar, change Camera to 'Allow', and refresh." });
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        setMediaError({ title: "Hardware Blocked or In Use", desc: "Your camera is either being used by another app, or it is disabled by a hardware privacy switch.", action: "1. Close Zoom/Meet. 2. Look at your keyboard for a camera icon (like F8 or F10) and press it to enable the camera." });
+        setMediaError({ title: "Hardware In Use", desc: "Your camera is being used by another app.", action: "Close Zoom/Meet or check your physical privacy shutter." });
       } else {
         setMediaError({ title: "Camera Error", desc: "An unexpected error occurred.", action: err.message });
       }
@@ -176,12 +177,16 @@ const VidMatches = () => {
 
   const createPeerConnection = async (targetUserId: string, roomId: string) => {
     const iceServers = await getIceConfig();
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = new RTCPeerConnection({ 
+        iceServers,
+        iceTransportPolicy: 'all', // FIX: Helps bypass strict mobile NATs
+        bundlePolicy: 'max-bundle'
+    });
     pcRef.current = pc;
     iceCandidateQueue.current = [];
 
     pc.onicecandidate = (event) => {
-      // FIX #1: Added roomId and room_id to ensure the backend routes the ICE candidate!
+      // FIX: Ensure both room formats are sent so backend doesn't drop the candidate
       if (event.candidate && wsRef.current) {
         wsRef.current({ 
             type: 'ice_candidate', 
@@ -194,14 +199,16 @@ const VidMatches = () => {
       }
     };
 
+    // FIX: The Aggressive Auto-Play Hack to force stranger's video to show
     pc.ontrack = (event) => {
       if (remoteVideoRef.current) {
         if (event.streams && event.streams[0]) {
           remoteVideoRef.current.srcObject = event.streams[0];
         } else {
-          let inboundStream = new MediaStream([event.track]);
-          remoteVideoRef.current.srcObject = inboundStream;
+          remoteVideoRef.current.srcObject = new MediaStream([event.track]);
         }
+        // Force the browser to play it instantly
+        remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e));
       }
     };
 
@@ -290,7 +297,6 @@ const VidMatches = () => {
         handleSkip(); 
       }
     } catch (error) {
-      console.error(`Failed to execute ${actionType}:`, error);
       alert(`Failed to complete action.`);
     } finally {
       setIsProcessingAction(false);
@@ -329,11 +335,9 @@ const VidMatches = () => {
         setChatMessages([{ sender: 'system', text: 'You are now video chatting with a stranger!' }]);
         setTimeout(() => setSlideState('idle'), 500);
 
-        // FIX #1: Securely extract partner ID
         const partnerId = parsed.peerId || parsed.partnerId || parsed.partner_id || parsed.partner_username || 'stranger';
         if (partnerId !== 'stranger') setPeerSync(partnerId);
 
-        // FIX #1: Securely determine the initiator of the WebRTC connection
         const isInitiator = parsed.initiator || parsed.isInitiator || 
                            (user?.id && partnerId !== 'stranger' && String(user.id).localeCompare(String(partnerId)) < 0);
 
@@ -342,7 +346,6 @@ const VidMatches = () => {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             
-            // FIX #1: Added roomId to ensure the backend routes the offer to the room!
             wsRef.current({ 
                 type: 'call_offer', 
                 roomId: roomId, 
@@ -354,7 +357,6 @@ const VidMatches = () => {
         }
       }
 
-      // FIX #5: Aggressively listen for the backend telling us the stranger left
       if (parsed.type === 'stranger_disconnected' || parsed.type === 'room_closed' || parsed.type === 'peer_left') {
         if (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) {
             handlePeerDisconnected();
@@ -370,7 +372,6 @@ const VidMatches = () => {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         
-        // FIX #1: Added roomId to answer payload
         wsRef.current({ 
             type: 'call_answer', 
             roomId: currentRoomId, 
@@ -431,25 +432,33 @@ const VidMatches = () => {
     e.preventDefault();
     if (!inputValue.trim() || matchState !== 'matched' || !activeRoomId) return;
     setChatMessages(prev => [...prev, { sender: 'me', text: inputValue }]);
-    wsRef.current({ type: 'send_message', roomId: activeRoomId, text: inputValue, tempId: `tmp_${Date.now()}` });
+    
+    // FIX: Using strict payload matching
+    wsRef.current({ 
+        type: 'send_message', 
+        roomId: activeRoomId, 
+        room_id: activeRoomId, 
+        text: inputValue, 
+        tempId: `tmp_${Date.now()}` 
+    });
+    
     setInputValue('');
     setShowEmojiPicker(false);
   };
 
   return (
     <DashboardLayout>
-      {/* <style>{`
+      <style>{`
         aside.w-\\[350px\\] { display: none !important; }
-      `}</style> */}
+      `}</style>
 
-      {/* FIX #4: UI properly respects light theme using bg-gray-100 */}
+      {/* FIX: Removed 'hidden md:block' logic to ensure layout holds on all screen sizes */}
       <div ref={containerRef} onMouseMove={resetIdleTimer} onTouchStart={resetIdleTimer} className="absolute inset-0 z-50 flex flex-col md:flex-row bg-gray-100 dark:bg-[#050505] overflow-hidden transition-colors">
         
         {/* CUSTOM MODALS OVERLAY */}
         {modalType !== 'NONE' && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white dark:bg-[#1A1A1B] border border-gray-200 dark:border-[#343536] rounded-3xl p-6 md:p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200 transition-colors">
-              {/* MODALS RENDER HERE */}
               {modalType === 'BLOCK' && (
                 <div className="text-center">
                   <div className="w-16 h-16 rounded-full bg-red-50 dark:bg-[#451212] text-red-600 dark:text-red-500 flex items-center justify-center mx-auto mb-5 shadow-inner border border-red-100 dark:border-[#5c1c1c]">
@@ -518,7 +527,6 @@ const VidMatches = () => {
                 <button onClick={() => setLayoutMode(prev => prev === 'stacked' ? 'split' : 'stacked')} className="bg-white/80 hover:bg-white dark:bg-black/40 dark:hover:bg-black/60 backdrop-blur-md border border-gray-300 dark:border-white/10 text-gray-700 dark:text-white p-3 rounded-xl transition-all shadow-sm hidden md:block hover:-translate-y-0.5" title="Switch Layout">
                   {layoutMode === 'stacked' ? <Columns size={18} strokeWidth={2.5} /> : <Rows size={18} strokeWidth={2.5} />}
                 </button>
-                {/* FIX #3: Removed 'hidden md:block' so mobile users can click the chat toggle button! */}
                 <button onClick={() => setShowChat(!showChat)} className="bg-white/80 hover:bg-white dark:bg-black/40 dark:hover:bg-black/60 backdrop-blur-md border border-gray-300 dark:border-white/10 text-gray-700 dark:text-white p-3 rounded-xl transition-all shadow-sm hover:-translate-y-0.5" title="Toggle Chat">
                   {showChat ? <MessageSquareOff size={18} strokeWidth={2.5} /> : <MessageSquare size={18} strokeWidth={2.5} />}
                 </button>

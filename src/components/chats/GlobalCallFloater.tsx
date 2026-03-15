@@ -16,7 +16,7 @@ export const GlobalCallFloater = () => {
       return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // --- TOAST STATE (Moved to Bottom Right) ---
+  // --- TOAST STATE ---
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error' | 'info' | 'warning'} | null>(null);
   const showToast = (msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
     setToast({ msg, type });
@@ -30,7 +30,7 @@ export const GlobalCallFloater = () => {
   const [callCamOff, setCallCamOff] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  const [pos, setPos] = useState({ right: 24, bottom: 96 }); // Default bottom to avoid chat inputs
+  const [pos, setPos] = useState({ right: 24, bottom: 96 });
   const dragRef = useRef({ isDragging: false, startX: 0, startY: 0, x: 24, y: 96 });
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -74,19 +74,17 @@ export const GlobalCallFloater = () => {
 
       setActiveCall(null);
       setCallDuration(0);
-      
-      // TRIGGER REFRESH FOR CALL HISTORY TAB
       window.dispatchEvent(new CustomEvent('REFRESH_CHATS'));
   };
 
+  // FIX #1 & #2: High Quality Media fetching
   const getMedia = async (video: boolean) => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
               audio: { echoCancellation: true, noiseSuppression: true }, 
-              video: video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false 
+              video: video ? { width: { min: 640, ideal: 1280, max: 1920 }, height: { min: 480, ideal: 720, max: 1080 }, frameRate: { ideal: 30 } } : false 
           });
           localStreamRef.current = stream; 
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream; 
           return stream;
       } catch (err) { 
           showToast("Camera/Mic access denied. Check permissions!", "error");
@@ -95,12 +93,19 @@ export const GlobalCallFloater = () => {
   };
 
   const initPeerConnection = async (targetUserId: string, callId: string) => {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const pc = new RTCPeerConnection({ 
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }],
+          iceTransportPolicy: 'all',
+          bundlePolicy: 'max-bundle'
+      });
       pcRef.current = pc; iceCandidateQueue.current = [];
       pc.onicecandidate = (e) => { if (e.candidate) sendRaw({ type: 'ice_candidate', to: targetUserId, callId, candidate: JSON.stringify(e.candidate) }); };
       pc.ontrack = (e) => { 
           const stream = e.streams && e.streams.length > 0 ? e.streams[0] : new MediaStream([e.track]);
-          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream; 
+          if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = stream; 
+              remoteVideoRef.current.play().catch(console.error); // Force play
+          }
       };
       pc.oniceconnectionstatechange = () => { 
           if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
@@ -122,6 +127,11 @@ export const GlobalCallFloater = () => {
           const callId = `call_${Date.now()}`;
           setActiveCall({ id: callId, roomId, peerName, peerAvatar, isVideo: type === 'video', peerId, isAccepted: false });
           setIsMinimized(false);
+
+          // FIX #3: Ensure the video ref is loaded before attaching stream
+          setTimeout(() => {
+             if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+          }, 100);
           
           sendRaw({ 
               type: 'call_ring', 
@@ -187,13 +197,21 @@ export const GlobalCallFloater = () => {
 
   const acceptIncomingCall = async () => {
       stopAllRingtones(); const parsed = incomingCall; setIncomingCall(null);
+      
       const stream = await getMedia(parsed.hasVideo);
       if (!stream) { 
           sendRaw({ type: 'call_reject', to: parsed.from, callId: parsed.callId, reason: 'no_media' }); 
           return; 
       }
+
+      // FIX #3: Setup state FIRST so DOM renders, then attach video
       setActiveCall({ id: parsed.callId, roomId: parsed.roomId, peerName: parsed.callerName || 'User', peerAvatar: parsed.callerAvatar, isVideo: parsed.hasVideo, peerId: parsed.from, isAccepted: true });
       setIsMinimized(false);
+
+      setTimeout(() => {
+         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      }, 100);
+
       sendRaw({ type: 'call_accept', to: parsed.from, callId: parsed.callId });
       showToast("Call started", "success");
   };
@@ -246,7 +264,7 @@ export const GlobalCallFloater = () => {
 
   return (
     <>
-      {/* --- CALL TOASTER UI (Bottom Right, above chat inputs) --- */}
+      {/* --- CALL TOASTER UI --- */}
       {toast && (
         <div className={`fixed bottom-24 right-4 md:right-8 z-[1000000] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-2xl border animate-in slide-in-from-bottom-4 duration-300 transition-all ${
           toast.type === 'success' ? 'bg-green-500 border-green-400 text-white' :
@@ -317,7 +335,6 @@ export const GlobalCallFloater = () => {
                    <button onTouchStart={(e) => { e.stopPropagation(); setCallMicOff(!callMicOff); if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = callMicOff); }} className={`p-2.5 rounded-full ${callMicOff ? 'bg-white text-black' : 'bg-gray-800 text-white'}`}><MicOff size={16} strokeWidth={2.5}/></button>
                    <button onTouchStart={(e) => { e.stopPropagation(); endActiveCall(); }} className="p-2.5 bg-red-600 rounded-full text-white"><Phone size={16} strokeWidth={2.5} className="rotate-[135deg]" /></button>
                 </div>
-                {/* Hidden video elements to keep connection alive on mobile minimized */}
                 <div className="opacity-0 absolute pointer-events-none w-px h-px overflow-hidden">
                     <video ref={remoteVideoRef} autoPlay playsInline />
                     {activeCall?.isVideo && <video ref={localVideoRef} autoPlay playsInline muted />}
@@ -328,9 +345,8 @@ export const GlobalCallFloater = () => {
           {/* --- 2. DESKTOP MINIMIZED & FULLSCREEN --- */}
           {(!isMinimized || !isMobile) && (
              <>
-               {/* Desktop Minimized Header */}
                {isMinimized && !isMobile && (
-                  <div className="flex items-center justify-between px-3 py-2 bg-black/80 pointer-events-none">
+                  <div className="flex items-center justify-between px-3 py-2 bg-black/80 pointer-events-none z-30">
                       <div className="flex items-center gap-2 min-w-0"><div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"></div><span className="text-white text-xs font-bold truncate drop-shadow-md">{activeCall?.peerName}</span></div>
                       <div className="flex items-center gap-2 pointer-events-auto">
                           {activeCall?.isVideo && (<button onMouseDown={(e) => { e.stopPropagation(); togglePiP(); }} className="p-1 text-gray-400 hover:text-white transition-colors" title="Pop out to OS"><PictureInPicture size={14} /></button>)}
@@ -339,7 +355,6 @@ export const GlobalCallFloater = () => {
                   </div>
                )}
 
-               {/* Fullscreen Header */}
                {!isMinimized && (
                   <div className="absolute top-6 left-6 z-50 flex items-center gap-3">
                       <button onClick={() => setIsMinimized(true)} className="p-3 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white transition-all border border-white/10" title="Minimize in App"><Minimize2 size={24} /></button>
@@ -347,36 +362,48 @@ export const GlobalCallFloater = () => {
                   </div>
                )}
 
-               {/* Video Area */}
-               <div className={`relative flex items-center justify-center bg-black ${isMinimized ? 'h-36' : 'flex-1'}`}>
-                   {/* Remote Video */}
-                   <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${!activeCall?.isVideo ? 'opacity-0 absolute pointer-events-none' : ''}`} />
+               {/* --- UPGRADED VIDEO AREA --- */}
+               <div className={`relative flex flex-col md:flex-row items-center justify-center bg-black ${isMinimized ? 'h-36' : 'flex-1'}`}>
                    
-                   {/* Audio Placeholder */}
+                   {/* REMOTE VIDEO (Stranger) */}
+                   <div className={`${isMinimized ? 'w-full h-full' : 'flex-1 h-full w-full'} relative`}>
+                       <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover ${!activeCall?.isVideo ? 'opacity-0 absolute pointer-events-none' : ''}`} />
+                       {activeCall?.isVideo && !isMinimized && <div className="absolute bottom-4 left-4 bg-black/40 px-2 py-1 rounded text-[10px] text-white font-bold uppercase tracking-widest z-10">Stranger</div>}
+                   </div>
+                   
+                   {/* AUDIO PLACEHOLDER */}
                    {!activeCall?.isVideo && (
-                      <div className={`${isMinimized ? 'w-16 h-16 text-2xl' : 'w-40 h-40 md:w-48 md:h-48 text-6xl md:text-7xl'} rounded-full bg-gray-800 flex items-center justify-center font-extrabold text-white shadow-2xl overflow-hidden ${activeCall?.isAccepted ? 'border-4 border-green-500/50' : 'animate-pulse border-4 border-blue-500/30'}`}>
-                         {activeCall?.peerAvatar ? <img src={activeCall.peerAvatar} className="w-full h-full object-cover" alt="avatar"/> : activeCall?.peerName?.charAt(0).toUpperCase()}
+                      <div className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${isMinimized ? 'w-16 h-16 text-2xl' : 'w-40 h-40 md:w-48 md:h-48 text-6xl md:text-7xl'} rounded-full bg-gray-800 flex items-center justify-center font-extrabold text-white shadow-2xl overflow-hidden ${activeCall?.isAccepted ? 'border-4 border-green-500/50' : 'animate-pulse border-4 border-blue-500/30'} z-10`}>
+                          {activeCall?.peerAvatar ? <img src={activeCall.peerAvatar} className="w-full h-full object-cover" alt="avatar"/> : activeCall?.peerName?.charAt(0).toUpperCase()}
                       </div>
                    )}
                    
-                   {/* Local Picture-in-Picture */}
+                   {/* LOCAL VIDEO (You) */}
                    {activeCall?.isVideo && !callCamOff && (
-                       <div className={`absolute overflow-hidden bg-gray-800 border border-white/20 shadow-2xl z-20 ${isMinimized ? 'bottom-2 right-2 w-16 h-24 rounded-lg' : 'bottom-8 right-6 md:bottom-28 md:right-8 w-28 h-40 md:w-40 md:h-56 rounded-2xl'}`}>
+                       <div className={`
+                           ${isMinimized 
+                               ? 'absolute bottom-2 right-2 w-16 h-24 rounded-lg z-20 shadow-2xl' 
+                               : isMobile 
+                                 ? 'absolute bottom-28 right-6 w-28 h-40 rounded-2xl z-20 shadow-2xl' // Floating PiP on Mobile
+                                 : 'flex-1 h-full w-full relative border-l border-white/10' // Side-by-Side on Laptop
+                           } overflow-hidden bg-gray-900 transition-all duration-300
+                       `}>
                           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                          {!isMinimized && <div className="absolute bottom-4 left-4 bg-blue-600/60 px-2 py-1 rounded text-[10px] text-white font-bold uppercase tracking-widest z-10">You</div>}
                        </div>
                    )}
                </div>
 
-               {/* Fullscreen Name & Duration Overlay (Forces White Text) */}
+               {/* Fullscreen Audio Overlay Details */}
                {!isMinimized && !activeCall?.isVideo && (
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-28 md:translate-y-36 flex flex-col items-center pointer-events-none w-full px-4 text-center">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-28 md:translate-y-36 flex flex-col items-center pointer-events-none w-full px-4 text-center z-10">
                      <h2 className="text-2xl md:text-3xl font-extrabold text-white mb-2 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{activeCall?.peerName}</h2>
                      <p className={`text-xs md:text-sm font-extrabold uppercase tracking-widest drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] ${activeCall?.isAccepted ? 'text-green-400' : 'text-blue-400 animate-pulse'}`}>{activeCall?.isAccepted ? formatCallDuration(callDuration) : 'Calling...'}</p>
                   </div>
                )}
 
                {/* Control Bar */}
-               <div className={`flex items-center justify-center gap-4 md:gap-6 ${isMinimized ? 'py-3 bg-black/80' : 'absolute inset-x-0 bottom-0 pb-10 pt-32 bg-gradient-to-t from-black via-black/80 to-transparent'}`}>
+               <div className={`flex items-center justify-center gap-4 md:gap-6 z-30 ${isMinimized ? 'py-3 bg-black/80 absolute bottom-0 w-full' : 'absolute inset-x-0 bottom-0 pb-10 pt-32 bg-gradient-to-t from-black via-black/80 to-transparent'}`}>
                   <button onMouseDown={(e) => { e.stopPropagation(); setCallMicOff(!callMicOff); if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = callMicOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callMicOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><MicOff size={isMinimized ? 16 : 24} /></button>
                   {activeCall?.isVideo && (<button onMouseDown={(e) => { e.stopPropagation(); setCallCamOff(!callCamOff); if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach(t => t.enabled = callCamOff); }} onTouchStart={(e) => e.stopPropagation()} className={`rounded-full flex items-center justify-center transition-all shadow-lg ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16'} ${callCamOff ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white backdrop-blur-md border border-white/10'}`}><VideoOff size={isMinimized ? 16 : 24} /></button>)}
                   <button onMouseDown={(e) => { e.stopPropagation(); endActiveCall(); }} onTouchStart={(e) => e.stopPropagation()} className={`bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center text-white transition-transform active:scale-95 ${isMinimized ? 'p-2.5' : 'w-14 h-14 md:w-16 md:h-16 shadow-[0_0_20px_rgba(220,38,38,0.4)]'}`}><Phone size={isMinimized ? 16 : 28} className="rotate-[135deg]" /></button>
