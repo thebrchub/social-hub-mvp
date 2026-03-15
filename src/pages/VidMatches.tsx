@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
-import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare,  X, Columns, Smile, Ban} from 'lucide-react';
+import { Send, AlertTriangle, UserPlus, Flag, Mic, MicOff, Video, VideoOff, FastForward, Power, Loader2, Maximize, Minimize, MessageSquare, X, Columns, Smile, Ban} from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
@@ -63,10 +63,7 @@ const VidMatches = () => {
   const wsRef = useRef<any>(null); 
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
 
-  // THE TIE-BREAKER: Used to randomly decide who initiates the call
-  const myTieBreaker = useRef(Math.random());
-
-  // Relentless Auto-Binder
+  // Auto-Binder to ensure video tags don't lose their stream during React re-renders
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
@@ -114,7 +111,6 @@ const VidMatches = () => {
     activeRemoteStream.current = null; 
     setRoomSync(null);
     setPeerSync(null);
-    myTieBreaker.current = Math.random(); // Reset tie-breaker for next match
   };
 
   const handlePeerDisconnected = async () => {
@@ -181,10 +177,12 @@ const VidMatches = () => {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && wsRef.current) {
+        // FIX 1: Attach our user.id so we know WE sent this
         wsRef.current({ 
           type: 'ice_candidate', 
           roomId: roomId, 
           room_id: roomId, 
+          from: user?.id, 
           to: targetUserId, 
           callId: roomId, 
           candidate: JSON.stringify(event.candidate) 
@@ -192,16 +190,12 @@ const VidMatches = () => {
       }
     };
 
-    // PROPER TRACK HANDLING
     pc.ontrack = (event) => {
-      if (!activeRemoteStream.current) {
-        activeRemoteStream.current = new MediaStream();
-      }
-      // Add incoming track to our persistent stream
-      activeRemoteStream.current.addTrack(event.track);
+      const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+      activeRemoteStream.current = stream;
       
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== activeRemoteStream.current) {
-        remoteVideoRef.current.srcObject = activeRemoteStream.current;
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
         remoteVideoRef.current.play().catch(() => {});
       }
     };
@@ -299,6 +293,11 @@ const VidMatches = () => {
 
     const unsubscribe = subscribe(async (parsed: any) => {
       const currentRoomId = activeRoomIdRef.current;
+      
+      // FIX 2: THE ECHO FILTER
+      // Find out who sent this message. If it was us, IGNORE IT COMPLETELY.
+      const senderId = parsed.from || parsed.senderId || parsed.peerId;
+      const isMe = String(senderId) === String(user?.id);
 
       if (parsed.type === 'match_found') {
         const roomId = parsed.roomId || parsed.room_id;
@@ -311,25 +310,25 @@ const VidMatches = () => {
         const partnerId = parsed.peerId || parsed.partnerId || parsed.partner_id || parsed.partner_username || 'stranger';
         if (partnerId !== 'stranger') setPeerSync(partnerId);
 
-        // STEP 1: Ping the room to negotiate who calls who
-        wsRef.current({ 
-          type: 'webrtc_hello', 
-          roomId: roomId, 
-          room_id: roomId, 
-          token: myTieBreaker.current 
-        });
-      }
+        // Deterministic Initiator: Prevents standoffs cleanly
+        const myIdStr = String(user?.id || Math.random());
+        const theirIdStr = String(partnerId);
+        const isInitiator = myIdStr.localeCompare(theirIdStr) < 0;
 
-      // STEP 2: The Handshake. If my token is bigger, I am the Caller. If yours is bigger, I wait for your call.
-      if (parsed.type === 'webrtc_hello' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
-        if (myTieBreaker.current > parsed.token) {
-           console.log("I won the tie-breaker! Initiating WebRTC Call...");
-           const pc = await createPeerConnection('stranger', currentRoomId!);
-           const offer = await pc.createOffer();
-           await pc.setLocalDescription(offer);
-           wsRef.current({ type: 'call_offer', roomId: currentRoomId, room_id: currentRoomId, callId: currentRoomId, sdp: JSON.stringify(offer) });
-        } else {
-           console.log("Stranger won the tie-breaker. Waiting for their offer...");
+        if (isInitiator) {
+            const pc = await createPeerConnection(partnerId, roomId);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            // Send offer and explicitly attach OUR user.id to the 'from' field
+            wsRef.current({ 
+              type: 'call_offer', 
+              roomId: roomId, 
+              room_id: roomId, 
+              from: user?.id, 
+              to: partnerId, 
+              callId: roomId, 
+              sdp: JSON.stringify(offer) 
+            });
         }
       }
 
@@ -337,8 +336,14 @@ const VidMatches = () => {
         if (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) handlePeerDisconnected();
       }
 
+      // ---------------------------------------------------------
+      // THE ECHO SHIELD: Block WebRTC signals that we sent ourselves!
+      // ---------------------------------------------------------
+      if (isMe && ['call_offer', 'webrtc_offer', 'call_answer', 'ice_candidate'].includes(parsed.type)) {
+        return; // We threw the message in the trash! 🗑️
+      }
+
       if ((parsed.type === 'call_offer' || parsed.type === 'webrtc_offer') && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
-        const senderId = parsed.from || parsed.senderId || parsed.peerId;
         if (senderId) setPeerSync(senderId);
         
         const pc = await createPeerConnection(senderId || 'stranger', currentRoomId!);
@@ -348,7 +353,15 @@ const VidMatches = () => {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         
-        wsRef.current({ type: 'call_answer', roomId: currentRoomId, room_id: currentRoomId, to: senderId, callId: currentRoomId, sdp: JSON.stringify(answer) });
+        wsRef.current({ 
+          type: 'call_answer', 
+          roomId: currentRoomId, 
+          room_id: currentRoomId, 
+          from: user?.id, 
+          to: senderId, 
+          callId: currentRoomId, 
+          sdp: JSON.stringify(answer) 
+        });
         
         iceCandidateQueue.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)));
         iceCandidateQueue.current = [];
@@ -372,7 +385,7 @@ const VidMatches = () => {
         }
       }
 
-      if (parsed.type === 'send_message' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) && parsed.from !== user?.id) {
+      if (parsed.type === 'send_message' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) && !isMe) {
         setChatMessages(prev => [...prev, { sender: 'stranger', text: parsed.text || parsed.content }]);
       }
     });
@@ -398,7 +411,7 @@ const VidMatches = () => {
     e.preventDefault();
     if (!inputValue.trim() || matchState !== 'matched' || !activeRoomId) return;
     setChatMessages(prev => [...prev, { sender: 'me', text: inputValue }]);
-    wsRef.current({ type: 'send_message', roomId: activeRoomId, room_id: activeRoomId, text: inputValue, tempId: `tmp_${Date.now()}` });
+    wsRef.current({ type: 'send_message', roomId: activeRoomId, room_id: activeRoomId, from: user?.id, text: inputValue, tempId: `tmp_${Date.now()}` });
     setInputValue('');
     setShowEmojiPicker(false);
   };
