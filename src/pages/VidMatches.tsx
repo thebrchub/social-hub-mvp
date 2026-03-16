@@ -188,16 +188,19 @@ const VidMatches = () => {
       }
     };
 
-    // PROPER TRACK HANDLING
     pc.ontrack = (event) => {
       if (!activeRemoteStream.current) {
         activeRemoteStream.current = new MediaStream();
       }
-      // Add incoming track to our persistent stream
-      activeRemoteStream.current.addTrack(event.track);
-      
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== activeRemoteStream.current) {
-        remoteVideoRef.current.srcObject = activeRemoteStream.current;
+      const rs = activeRemoteStream.current;
+      const existingIds = new Set(rs.getTracks().map(t => t.id));
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach(t => { if (!existingIds.has(t.id)) rs.addTrack(t); });
+      } else if (!existingIds.has(event.track.id)) {
+        rs.addTrack(event.track);
+      }
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = rs;
         remoteVideoRef.current.play().catch(() => {});
       }
     };
