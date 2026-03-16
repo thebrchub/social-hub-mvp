@@ -301,6 +301,7 @@ const VidMatches = () => {
 
       if (parsed.type === 'match_found') {
         const roomId = parsed.roomId || parsed.room_id;
+        console.log('[VidMatch] match_found received', { roomId, partnerId: parsed.partnerId, myId: user?.id, raw: parsed });
         setRoomSync(roomId);
         setMatchState('matched');
         setSlideState('sliding-in');
@@ -313,13 +314,14 @@ const VidMatches = () => {
         // Deterministic caller selection: compare user IDs lexicographically.
         // Both peers independently reach the same conclusion — no handshake needed.
         if (user?.id && partnerId !== 'stranger' && user.id > partnerId) {
-          console.log("I am the caller (higher ID). Initiating WebRTC...");
+          console.log('[VidMatch] I am the CALLER (higher ID). Sending offer...', { myId: user.id, partnerId });
           const pc = await createPeerConnection(partnerId, roomId);
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           wsRef.current({ type: 'call_offer', roomId: roomId, room_id: roomId, to: partnerId, callId: roomId, sdp: JSON.stringify(offer) });
+          console.log('[VidMatch] Offer sent.');
         } else {
-          console.log("I am the callee (lower ID). Waiting for offer...");
+          console.log('[VidMatch] I am the CALLEE (lower ID or no partnerId). Waiting for offer...', { myId: user?.id, partnerId });
         }
       }
 
@@ -327,7 +329,8 @@ const VidMatches = () => {
         if (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) handlePeerDisconnected();
       }
 
-      if ((parsed.type === 'call_offer' || parsed.type === 'webrtc_offer') && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
+      if ((parsed.type === 'call_offer' || parsed.type === 'webrtc_offer') && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
+        console.log('[VidMatch] call_offer received!', { from: parsed.from, callId: parsed.callId, currentRoomId });
         const senderId = parsed.from || parsed.senderId || parsed.peerId || peerIdRef.current;
         if (senderId) setPeerSync(senderId);
         
@@ -344,7 +347,8 @@ const VidMatches = () => {
         iceCandidateQueue.current = [];
       }
 
-      if (parsed.type === 'call_answer' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
+      if (parsed.type === 'call_answer' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
+        console.log('[VidMatch] call_answer received!', { currentRoomId });
         if (pcRef.current) {
           const sdpObj = getSafeData(parsed.sdp);
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdpObj));
@@ -353,7 +357,8 @@ const VidMatches = () => {
         }
       }
 
-      if (parsed.type === 'ice_candidate' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
+      if (parsed.type === 'ice_candidate' && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
+        console.log('[VidMatch] ice_candidate received');
         const candObj = getSafeData(parsed.candidate);
         if (pcRef.current && pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) {
            pcRef.current.addIceCandidate(new RTCIceCandidate(candObj));
@@ -364,6 +369,11 @@ const VidMatches = () => {
 
       if (parsed.type === 'send_message' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId) && parsed.from !== user?.id) {
         setChatMessages(prev => [...prev, { sender: 'stranger', text: parsed.text || parsed.content }]);
+      }
+
+      // Log server errors for debugging
+      if (parsed.type === 'error') {
+        console.error('[VidMatch] Server error:', parsed.code, parsed.message);
       }
     });
 
