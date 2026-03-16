@@ -186,7 +186,7 @@ export const GlobalCallFloater = () => {
             });
          }
          
-         if (parsed.type === 'call_offer') {
+         if (parsed.type === 'call_offer' && !parsed.callId?.startsWith('stranger_')) {
              initPeerConnection(parsed.from, parsed.callId).then(pc => {
                  const sdpData = getParsedData(parsed.sdp);
                  pc.setRemoteDescription(new RTCSessionDescription(sdpData)).then(() => {
@@ -200,14 +200,14 @@ export const GlobalCallFloater = () => {
              });
          }
          
-         if (parsed.type === 'call_answer' && pcRef.current) {
+         if (parsed.type === 'call_answer' && pcRef.current && !parsed.callId?.startsWith('stranger_')) {
              const sdpData = getParsedData(parsed.sdp);
              pcRef.current.setRemoteDescription(new RTCSessionDescription(sdpData));
              iceCandidateQueue.current.forEach(c => pcRef.current!.addIceCandidate(new RTCIceCandidate(c))); 
              iceCandidateQueue.current = [];
          }
          
-         if (parsed.type === 'ice_candidate') {
+         if (parsed.type === 'ice_candidate' && !parsed.callId?.startsWith('stranger_')) {
              const candObj = getParsedData(parsed.candidate);
              if (pcRef.current && pcRef.current.remoteDescription && pcRef.current.remoteDescription.type) pcRef.current.addIceCandidate(new RTCIceCandidate(candObj)); 
              else iceCandidateQueue.current.push(candObj);
