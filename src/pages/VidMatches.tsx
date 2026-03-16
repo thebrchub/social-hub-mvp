@@ -298,6 +298,7 @@ const VidMatches = () => {
 
     const unsubscribe = subscribe(async (parsed: any) => {
       const currentRoomId = activeRoomIdRef.current;
+      console.log('[VidMatch] WS message:', parsed.type, parsed);
 
       if (parsed.type === 'match_found') {
         const roomId = parsed.roomId || parsed.room_id;
