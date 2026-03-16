@@ -63,9 +63,6 @@ const VidMatches = () => {
   const wsRef = useRef<any>(null); 
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
 
-  // THE TIE-BREAKER: Used to randomly decide who initiates the call
-  const myTieBreaker = useRef(Math.random());
-
   // Relentless Auto-Binder
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
@@ -114,7 +111,6 @@ const VidMatches = () => {
     activeRemoteStream.current = null; 
     setRoomSync(null);
     setPeerSync(null);
-    myTieBreaker.current = Math.random(); // Reset tie-breaker for next match
   };
 
   const handlePeerDisconnected = async () => {
@@ -311,29 +307,16 @@ const VidMatches = () => {
         const partnerId = parsed.peerId || parsed.partnerId || parsed.partner_id || parsed.partner_username || 'stranger';
         if (partnerId !== 'stranger') setPeerSync(partnerId);
 
-        // STEP 1: Ping the room to negotiate who calls who
-        wsRef.current({ 
-          type: 'webrtc_hello', 
-          roomId: roomId, 
-          room_id: roomId, 
-          token: myTieBreaker.current 
-        });
-      }
-
-      // STEP 2: The Handshake. If my token is bigger, I am the Caller. If yours is bigger, I wait for your call.
-      if (parsed.type === 'webrtc_hello' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
-        // Extract the peer's real user ID (server stamps "from" on every message)
-        const helloPeerId = parsed.from || parsed.senderId || parsed.peerId;
-        if (helloPeerId) setPeerSync(helloPeerId);
-
-        if (myTieBreaker.current > parsed.token) {
-           console.log("I won the tie-breaker! Initiating WebRTC Call...");
-           const pc = await createPeerConnection(helloPeerId || 'stranger', currentRoomId!);
-           const offer = await pc.createOffer();
-           await pc.setLocalDescription(offer);
-           wsRef.current({ type: 'call_offer', roomId: currentRoomId, room_id: currentRoomId, to: helloPeerId, callId: currentRoomId, sdp: JSON.stringify(offer) });
+        // Deterministic caller selection: compare user IDs lexicographically.
+        // Both peers independently reach the same conclusion — no handshake needed.
+        if (user?.id && partnerId !== 'stranger' && user.id > partnerId) {
+          console.log("I am the caller (higher ID). Initiating WebRTC...");
+          const pc = await createPeerConnection(partnerId, roomId);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          wsRef.current({ type: 'call_offer', roomId: roomId, room_id: roomId, to: partnerId, callId: roomId, sdp: JSON.stringify(offer) });
         } else {
-           console.log("Stranger won the tie-breaker. Waiting for their offer...");
+          console.log("I am the callee (lower ID). Waiting for offer...");
         }
       }
 
