@@ -322,12 +322,16 @@ const VidMatches = () => {
 
       // STEP 2: The Handshake. If my token is bigger, I am the Caller. If yours is bigger, I wait for your call.
       if (parsed.type === 'webrtc_hello' && (parsed.roomId === currentRoomId || parsed.room_id === currentRoomId)) {
+        // Extract the peer's real user ID (server stamps "from" on every message)
+        const helloPeerId = parsed.from || parsed.senderId || parsed.peerId;
+        if (helloPeerId) setPeerSync(helloPeerId);
+
         if (myTieBreaker.current > parsed.token) {
            console.log("I won the tie-breaker! Initiating WebRTC Call...");
-           const pc = await createPeerConnection('stranger', currentRoomId!);
+           const pc = await createPeerConnection(helloPeerId || 'stranger', currentRoomId!);
            const offer = await pc.createOffer();
            await pc.setLocalDescription(offer);
-           wsRef.current({ type: 'call_offer', roomId: currentRoomId, room_id: currentRoomId, callId: currentRoomId, sdp: JSON.stringify(offer) });
+           wsRef.current({ type: 'call_offer', roomId: currentRoomId, room_id: currentRoomId, to: helloPeerId, callId: currentRoomId, sdp: JSON.stringify(offer) });
         } else {
            console.log("Stranger won the tie-breaker. Waiting for their offer...");
         }
@@ -338,7 +342,7 @@ const VidMatches = () => {
       }
 
       if ((parsed.type === 'call_offer' || parsed.type === 'webrtc_offer') && (parsed.callId === currentRoomId || parsed.roomId === currentRoomId)) {
-        const senderId = parsed.from || parsed.senderId || parsed.peerId;
+        const senderId = parsed.from || parsed.senderId || parsed.peerId || peerIdRef.current;
         if (senderId) setPeerSync(senderId);
         
         const pc = await createPeerConnection(senderId || 'stranger', currentRoomId!);
