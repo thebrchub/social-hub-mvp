@@ -1,524 +1,371 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom'; // ADDED NAVIGATE
 import DashboardLayout from '../layouts/DashboardLayout';
+import { api } from '../services/api';
+import PostCard, { type Post } from '../components/feed/PostCard';
+import { Loader2, Image as ImageIcon, Smile, Globe, Send, X, UserPlus, TrendingUp, Sparkles, ArrowUp } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
-import { Flame, MessageCircle, Repeat2, Share2, MoreHorizontal, Image as ImageIcon, Smile, Zap, Globe, Sparkles, TrendingUp } from 'lucide-react';
+import { GiphyFetch } from '@giphy/js-fetch-api';
+import { Grid } from '@giphy/react-components';
 
-// --- MOCK DATA: GLOBAL PULSE (15 Posts) ---
-const GLOBAL_POSTS = [
-  {
-    id: 101,
-    author: { name: "Cinephile Daily", username: "cine_verse", avatar: "https://ui-avatars.com/api/?name=Cinephile&background=random" },
-    content: "The cinematic universe they are building with the new Dhurandhar movie is absolutely insane. The VFX budget alone is rumored to be 300+ crores. Are we finally seeing Indian cinema take over the global VFX stage? 🎬🔥",
-    image: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=2525&auto=format&fit=crop",
-    time: "2h ago",
-    sparks: 1240,
-    ripples: 89,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 102,
-    author: { name: "Global Insights", username: "global_macro", avatar: "https://ui-avatars.com/api/?name=Global&background=0D8ABC&color=fff" },
-    content: "Supply chains are taking another massive hit this week due to the ongoing geopolitical tensions and the new blockades. If this continues, we'll see a domino effect on tech manufacturing by Q3. It's no longer just a regional issue, it's a global economic bottleneck. Thoughts?",
-    time: "5h ago",
-    sparks: 342,
-    ripples: 124,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 103,
-    author: { name: "Aam Aadmi Voice", username: "common_man_india", avatar: "https://ui-avatars.com/api/?name=Aam&background=D97706&color=fff" },
-    content: "LPG cylinder prices hiked again for the third time this year. While the global crude market stabilizes, the middle class is still bearing the brunt of domestic inflation. When does the relief actually trickle down? 📉⛽",
-    time: "8h ago",
-    sparks: 890,
-    ripples: 456,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 104,
-    author: { name: "TechCruncher", username: "tech_crunch", avatar: "https://ui-avatars.com/api/?name=Tech&background=10B981&color=fff" },
-    content: "Apple just silently dropped a new AI model on HuggingFace that outperforms GPT-4 on edge devices. The race for on-device AI is officially the most important battle in tech right now.",
-    time: "9h ago",
-    sparks: 5430,
-    ripples: 892,
-    isHot: true,
-    hasBacked: true
-  },
-  {
-    id: 105,
-    author: { name: "Sports Analyst", username: "sports_guru", avatar: "https://ui-avatars.com/api/?name=Sports&background=random" },
-    content: "Kohli's captaincy era will be studied in sports psychology classes. The sheer aggression he brought to the test team changed the DNA of Indian cricket forever. Unmatched legacy. 🏏",
-    image: "https://images.unsplash.com/photo-1531415074968-036ba1b575da?q=80&w=2667&auto=format&fit=crop",
-    time: "11h ago",
-    sparks: 2100,
-    ripples: 340,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 106,
-    author: { name: "Eco Warrior", username: "green_earth", avatar: "https://ui-avatars.com/api/?name=Eco&background=16A34A&color=fff" },
-    content: "Bangalore's water crisis is a warning to the world. We cannot keep paving over lakes to build IT parks and expect nature to just cope. Rainwater harvesting needs to be mandatory for all buildings immediately. 💧",
-    time: "12h ago",
-    sparks: 4320,
-    ripples: 920,
-    isHot: true,
-    hasBacked: true
-  },
-  {
-    id: 107,
-    author: { name: "Startup India", username: "startup_ind", avatar: "https://ui-avatars.com/api/?name=Startup&background=random" },
-    content: "Funding winter is over. Q1 2026 has seen a 40% spike in seed funding compared to last year. Investors are looking for deep tech and AI-first consumer apps. If you are building, now is the time to pitch! 🚀",
-    time: "14h ago",
-    sparks: 780,
-    ripples: 56,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 108,
-    author: { name: "Gamer Zone", username: "gg_wp", avatar: "https://ui-avatars.com/api/?name=Gamer&background=8B5CF6&color=fff" },
-    content: "GTA 6 trailer 3 just leaked on Reddit and Rockstar is taking down links fast. The map looks 3x bigger than Los Santos. My PC is going to melt trying to render this. 🎮🔥",
-    time: "15h ago",
-    sparks: 8900,
-    ripples: 1200,
-    isHot: true,
-    hasBacked: true
-  },
-  {
-    id: 109,
-    author: { name: "Finance Bro", username: "bull_market", avatar: "https://ui-avatars.com/api/?name=Finance&background=random" },
-    content: "Nifty crossing 25k is psychological. Retail investors are pouring money via SIPs like never before. The Indian middle class is finally moving away from just FDs and Gold. Massive wealth transfer happening right now. 📈",
-    time: "18h ago",
-    sparks: 1540,
-    ripples: 210,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 110,
-    author: { name: "Space Nerds", username: "astro_daily", avatar: "https://ui-avatars.com/api/?name=Space&background=000000&color=fff" },
-    content: "ISRO just announced the timeline for the next lunar rover. What they are achieving on a fraction of NASA's budget is a masterclass in frugal engineering. Proud moment! 🚀🌕",
-    image: "https://images.unsplash.com/photo-1517976487492-5750f3195933?q=80&w=2670&auto=format&fit=crop",
-    time: "20h ago",
-    sparks: 6700,
-    ripples: 450,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 111,
-    author: { name: "Meme Central", username: "dank_memes", avatar: "https://ui-avatars.com/api/?name=Meme&background=random" },
-    content: "Me telling myself I'll sleep early tonight vs Me at 3 AM debugging a CSS div that won't center. 😭💀",
-    time: "1d ago",
-    sparks: 3200,
-    ripples: 150,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 112,
-    author: { name: "Health & Fitness", username: "fit_life", avatar: "https://ui-avatars.com/api/?name=Fit&background=EF4444&color=fff" },
-    content: "Stop buying expensive protein powders with 20 unpronounceable ingredients. Sattu, eggs, paneer, and chicken. Keep it simple, keep it consistent. The fitness industry thrives on complicating things. 🏋️‍♂️",
-    time: "1d ago",
-    sparks: 1120,
-    ripples: 89,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 113,
-    author: { name: "Music Junkie", username: "indie_beats", avatar: "https://ui-avatars.com/api/?name=Music&background=random" },
-    content: "The indie music scene in India right now is producing better tracks than mainstream Bollywood. Artists are experimenting with synth-wave mixed with classical instruments and it sounds heavenly. 🎧🎶",
-    time: "1d ago",
-    sparks: 890,
-    ripples: 45,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 114,
-    author: { name: "Automotive India", username: "auto_heads", avatar: "https://ui-avatars.com/api/?name=Auto&background=3B82F6&color=fff" },
-    content: "EV infrastructure is growing, but range anxiety is still real on highways. Until we have 15-minute fast chargers every 50km, hybrids make more sense for the Indian market. Agree? 🚗⚡",
-    time: "1d ago",
-    sparks: 2340,
-    ripples: 410,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 115,
-    author: { name: "Design Thinker", username: "ui_ux_daily", avatar: "https://ui-avatars.com/api/?name=Design&background=random" },
-    content: "Minimalism is dying. Brutalism and maximalism are taking over web design. Users are bored of white space and gray text. They want personality, harsh borders, and bold colors. Look at what zQuab is doing! 🎨✨",
-    time: "2d ago",
-    sparks: 1890,
-    ripples: 112,
-    isHot: false,
-    hasBacked: true
-  }
-];
+const gf = new GiphyFetch('QkvvAzTY6DrGBFLYQS0u5E1MBTzw8eMP');
 
-// --- MOCK DATA: YOUR NETWORK (15 Posts) ---
-const NETWORK_POSTS = [
-  {
-    id: 201,
-    author: { name: "Raj Millennium Raj", username: "raj_millennium", avatar: "https://ui-avatars.com/api/?name=Raj&background=random" },
-    content: "Just pushed the new WebSocket architecture to prod. If the server doesn't crash in the next 10 minutes, we are going for beers! 🍻💻",
-    time: "10m ago",
-    sparks: 45,
-    ripples: 12,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 202,
-    author: { name: "Ninja Coder", username: "ninja_dev", avatar: "https://ui-avatars.com/api/?name=Ninja&background=random" },
-    content: "Anyone else noticing LiveKit acting weird with Firefox today? Video feeds are dropping frames. Might need to adjust the ICE servers. 🛠️",
-    time: "45m ago",
-    sparks: 12,
-    ripples: 3,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 203,
-    author: { name: "Satish Chauhan", username: "satish_c", avatar: "https://ui-avatars.com/api/?name=Satish&background=random" },
-    image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?q=80&w=2670&auto=format&fit=crop",
-    content: "New desk setup for the weekend hackathon. 2 monitors, 3 liters of coffee, 0 distractions. Let's go! 🚀",
-    time: "2h ago",
-    sparks: 89,
-    ripples: 14,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 204,
-    author: { name: "Priya Sharma", username: "priya_designs", avatar: "https://ui-avatars.com/api/?name=Priya&background=random" },
-    content: "Working on the new 'Pulse' animations. Trying to make the glow look organic and not just like a cheap CSS shadow. Figma file is getting heavy! 🎨",
-    time: "3h ago",
-    sparks: 112,
-    ripples: 22,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 205,
-    author: { name: "Amit Kumar", username: "amit_backend", avatar: "https://ui-avatars.com/api/?name=Amit&background=random" },
-    content: "Postgres index optimization is basically black magic. I just reduced a query time from 400ms to 12ms by moving two words around. I feel like a wizard. 🧙‍♂️🐘",
-    time: "4h ago",
-    sparks: 230,
-    ripples: 45,
-    isHot: true,
-    hasBacked: true
-  },
-  {
-    id: 206,
-    author: { name: "BRC Hub", username: "brc_official", avatar: "https://ui-avatars.com/api/?name=BRC&background=random" },
-    content: "Squad 'weekend' is currently live in a 10-person audio room debating whether React or Vue is better. It's getting heated. Join in! 🎙️🔥",
-    time: "5h ago",
-    sparks: 56,
-    ripples: 18,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 207,
-    author: { name: "Neha Gupta", username: "neha_g", avatar: "https://ui-avatars.com/api/?name=Neha&background=random" },
-    content: "Does anyone have a spare invite code for the beta testing group? I have a friend who wants to test the Stranger Cam feature.",
-    time: "6h ago",
-    sparks: 14,
-    ripples: 8,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 208,
-    author: { name: "Vikram Singh", username: "vikram_sec", avatar: "https://ui-avatars.com/api/?name=Vikram&background=random" },
-    content: "Just implemented rate limiting on the auth routes. Please don't spam the login button during your tests guys, you will get locked out for 15 mins! 🔒🛡️",
-    time: "7h ago",
-    sparks: 88,
-    ripples: 12,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 209,
-    author: { name: "Rahul Dev", username: "rahul_js", avatar: "https://ui-avatars.com/api/?name=Rahul&background=random" },
-    content: "I finally understand how useEffect dependencies actually work. It only took me 3 years and countless infinite loops. 😅",
-    time: "8h ago",
-    sparks: 340,
-    ripples: 67,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 210,
-    author: { name: "Raj Millennium Raj", username: "raj_millennium", avatar: "https://ui-avatars.com/api/?name=Raj&background=random" },
-    image: "https://images.unsplash.com/photo-1542831371-29b0f74f9713?q=80&w=2670&auto=format&fit=crop",
-    content: "Coding late night. The silence is the best soundtrack. 🌙",
-    time: "12h ago",
-    sparks: 145,
-    ripples: 23,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 211,
-    author: { name: "Kavya R", username: "kavya_pm", avatar: "https://ui-avatars.com/api/?name=Kavya&background=random" },
-    content: "User feedback on the new floating call widget has been 95% positive. We are definitely keeping the PIP mode for desktop. Great job team! 📊📞",
-    time: "14h ago",
-    sparks: 210,
-    ripples: 34,
-    isHot: true,
-    hasBacked: false
-  },
-  {
-    id: 212,
-    author: { name: "Ninja Coder", username: "ninja_dev", avatar: "https://ui-avatars.com/api/?name=Ninja&background=random" },
-    content: "Reminder: Tomorrow is code freeze for V1. Commit your changes by 5 PM or they aren't going into the final build! ⏰🚨",
-    time: "1d ago",
-    sparks: 78,
-    ripples: 11,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 213,
-    author: { name: "Satish Chauhan", username: "satish_c", avatar: "https://ui-avatars.com/api/?name=Satish&background=random" },
-    content: "Who wants to jump on a quick group call to test the latency? Need 4 people right now.",
-    time: "1d ago",
-    sparks: 12,
-    ripples: 4,
-    isHot: false,
-    hasBacked: true
-  },
-  {
-    id: 214,
-    author: { name: "Amit Kumar", username: "amit_backend", avatar: "https://ui-avatars.com/api/?name=Amit&background=random" },
-    content: "The Firebase FCM integration is complete. Background notifications should now be working even if the browser tab is closed. Let me know if anyone finds bugs. 🔔",
-    time: "1d ago",
-    sparks: 156,
-    ripples: 28,
-    isHot: false,
-    hasBacked: false
-  },
-  {
-    id: 215,
-    author: { name: "Priya Sharma", username: "priya_designs", avatar: "https://ui-avatars.com/api/?name=Priya&background=random" },
-    content: "Just completely redesigned the 'Matches' loading screen. It now has a sick pulsing 3D globe effect while searching for a stranger. You guys are going to love it! 🌍✨",
-    time: "2d ago",
-    sparks: 312,
-    ripples: 45,
-    isHot: true,
-    hasBacked: true
-  }
-];
+function useOnClickOutside(ref: React.RefObject<any>, handler: () => void) {
+  useEffect(() => {
+    const listener = (event: MouseEvent | TouchEvent) => {
+      if (!ref.current || ref.current.contains(event.target as Node)) return;
+      handler();
+    };
+    document.addEventListener('mousedown', listener);
+    return () => document.removeEventListener('mousedown', listener);
+  }, [ref, handler]);
+}
 
-export default function Feeds() {
-  const user = useAuthStore(state => state.user);
-  const [activeTab, setActiveTab] = useState<'pulse' | 'network'>('pulse');
+const compressImage = (file: File): Promise<{ blob: Blob, type: string, w: number, h: number }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { naturalWidth: w, naturalHeight: h } = img;
+      const MAX_DIM = 1920;
+      if (w > MAX_DIM || h > MAX_DIM) {
+        const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.drawImage(img, 0, 0, w, h);
+      
+      const outType = 'image/webp';
+      canvas.toBlob(blob => {
+        if (!blob) return resolve({ blob: file, type: file.type, w: img.naturalWidth, h: img.naturalHeight });
+        if (blob.size < file.size) resolve({ blob, type: outType, w, h });
+        else resolve({ blob: file, type: file.type, w: img.naturalWidth, h: img.naturalHeight });
+      }, outType, 0.82);
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => reject(new Error("Image load failed"));
+    img.src = URL.createObjectURL(file);
+  });
+};
+
+function GiphyPicker({ onSelect }: { onSelect: (url: string) => void }) {
+  const [search, setSearch] = useState('');
+  const fetchGifs = (offset: number) => search ? gf.search(search, { offset, limit: 10 }) : gf.trending({ offset, limit: 10 });
+
+  return (
+    <div className="w-[300px] flex flex-col gap-2 p-3">
+      <input type="text" placeholder="Search GIFs..." className="w-full bg-gray-100 dark:bg-black rounded-xl px-4 py-2 border border-gray-200 dark:border-gray-800 text-sm focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white" onChange={(e) => setSearch(e.target.value)} value={search} />
+      <div className="h-[300px] overflow-y-auto scrollbar-hide rounded-lg">
+        <Grid key={search} width={275} columns={2} fetchGifs={fetchGifs} onGifClick={(gif, e) => { e.preventDefault(); onSelect(gif.images.original.url); }} noResultsMessage={<div className="text-center text-gray-500 mt-4 text-sm font-bold">No GIFs found</div>} />
+      </div>
+    </div>
+  );
+}
+
+export default function Feed() {
+  const navigate = useNavigate();
+  const [posts, setPosts] = useState<Post[]>([]);
+  const currentUser = useAuthStore(state => state.user);
+
+  const [feedType, setFeedType] = useState<'global' | 'network'>('global');
+  const [loading, setLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   
-  // Keep separate state for both feeds so sparks are maintained
-  const [pulsePosts, setPulsePosts] = useState(GLOBAL_POSTS);
-  const [networkPosts, setNetworkPosts] = useState(NETWORK_POSTS);
+  const [newSparksAvatars, setNewSparksAvatars] = useState<string[]>([]);
+  
+  const cursorRef = useRef<number | null>(null);
+  const isLoadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
 
-  // --- SMART SCROLL HEADER LOGIC ---
+  useEffect(() => { isLoadingMoreRef.current = isLoadingMore; }, [isLoadingMore]);
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+
+  const [caption, setCaption] = useState('');
+  const [visibility, setVisibility] = useState<'public' | 'friends'>('public');
+  const [isPosting, setIsPosting] = useState(false);
+  const [gifUrl, setGifUrl] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState('');
+  
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const gifMenuRef = useRef<HTMLDivElement>(null);
+
   const [showHeader, setShowHeader] = useState(true);
   const lastScrollY = useRef(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  useOnClickOutside(gifMenuRef, () => setShowGifPicker(false));
+
+  useEffect(() => {
+    cursorRef.current = null;
+    setHasMore(true);
+    setNewSparksAvatars([]); 
+    fetchFeed(true);
+  }, [feedType]); 
+
+  // LIVE POLLING FOR NEW POSTS
+  useEffect(() => {
+    if (posts.length === 0) return;
+    const topPostId = posts[0].id;
+    
+    const pollInterval = setInterval(async () => {
+       try {
+          const res = await api.get(`/arena/feed/${feedType}?limit=5`);
+          const latestPosts = Array.isArray(res) ? res : (res.data || []);
+          
+          if (latestPosts.length > 0 && latestPosts[0].id > topPostId) {
+             const newPosts = latestPosts.filter((p: any) => p.id > topPostId);
+             const avatars = Array.from(new Set(newPosts.map((p: any) => p.avatarUrl || `https://ui-avatars.com/api/?name=${p.displayName || 'U'}&background=random`))).slice(0, 3);
+             setNewSparksAvatars(avatars as string[]);
+          }
+       } catch (e) { /* Silent fail */ }
+    }, 20000); 
+    
+    return () => clearInterval(pollInterval);
+  }, [posts, feedType]);
+
+  const fetchFeed = async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    else setIsLoadingMore(true);
+
+    try {
+      const url = `/arena/feed/${feedType}?limit=20${cursorRef.current && !isInitial ? `&cursor=${cursorRef.current}` : ''}`;
+      const res = await api.get(url); 
+      const fetchedPosts = Array.isArray(res) ? res : (res.data || []);
+      
+      if (fetchedPosts.length > 0) {
+        setPosts(prev => isInitial ? fetchedPosts : [...prev, ...fetchedPosts]);
+        cursorRef.current = fetchedPosts[fetchedPosts.length - 1].id;
+        setHasMore(fetchedPosts.length >= 20);
+      } else {
+        if (isInitial) setPosts([]);
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error("Failed to load feed", err);
+    } finally {
+      setLoading(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleLoadNewSparks = () => {
+    setNewSparksAvatars([]);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    fetchFeed(true);
+  };
+
   useEffect(() => {
     const handleScroll = () => {
       if (!scrollContainerRef.current) return;
-      const currentScrollY = scrollContainerRef.current.scrollTop;
+      const { scrollTop, clientHeight, scrollHeight } = scrollContainerRef.current;
       
-      // If scrolling DOWN, hide header. If scrolling UP, show header.
-      if (currentScrollY > lastScrollY.current && currentScrollY > 100) {
-        setShowHeader(false);
-      } else if (currentScrollY < lastScrollY.current) {
-        setShowHeader(true);
-      }
-      
-      lastScrollY.current = currentScrollY;
-    };
+      if (scrollTop > lastScrollY.current && scrollTop > 100) setShowHeader(false); 
+      else if (scrollTop < lastScrollY.current) setShowHeader(true);  
+      lastScrollY.current = scrollTop;
 
+      if (scrollHeight - scrollTop - clientHeight < 400) {
+        if (!isLoadingMoreRef.current && hasMoreRef.current) {
+          fetchFeed(false);
+        }
+      }
+    };
+    
     const container = scrollContainerRef.current;
     if (container) container.addEventListener('scroll', handleScroll, { passive: true });
     return () => { if (container) container.removeEventListener('scroll', handleScroll); };
   }, []);
 
+  const handlePostDeleted = (deletedPostId: number) => {
+    setPosts(prev => prev.filter(p => p.id !== deletedPostId));
+  };
 
-  // Dynamic feed selector
-  const activePosts = activeTab === 'pulse' ? pulsePosts : networkPosts;
-  
-  const handleSpark = (postId: number) => {
-    if (activeTab === 'pulse') {
-        setPulsePosts(pulsePosts.map(p => {
-          if (p.id === postId) { const isBacking = !p.hasBacked; return { ...p, hasBacked: isBacking, sparks: p.sparks + (isBacking ? 1 : -1) }; }
-          return p;
-        }));
-    } else {
-        setNetworkPosts(networkPosts.map(p => {
-          if (p.id === postId) { const isBacking = !p.hasBacked; return { ...p, hasBacked: isBacking, sparks: p.sparks + (isBacking ? 1 : -1) }; }
-          return p;
-        }));
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setGifUrl(''); 
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    e.target.value = ''; 
+  };
+
+  const clearAttachment = () => {
+    setGifUrl(''); setImageFile(null);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview('');
+  };
+
+  const handlePostSubmit = async () => {
+    if (!caption.trim() && !gifUrl && !imageFile) return;
+    setIsPosting(true);
+
+    try {
+      let uploadedMediaArray: any[] = [];
+      if (imageFile) {
+        const { blob, type, w, h } = await compressImage(imageFile);
+        const presignRes = await api.post(`/arena/media/presign`, { filename: imageFile.name.replace(/\.[^.]+$/, '.webp'), contentType: type });
+        const uploadRes = await fetch(presignRes.uploadUrl, { method: 'PUT', headers: { 'Content-Type': type }, body: blob });
+        if (!uploadRes.ok) throw new Error("Upload failed.");
+        uploadedMediaArray = [{ objectKey: presignRes.objectKey, mediaType: 'image', width: w, height: h, sortOrder: 0 }];
+      }
+
+      if (gifUrl) uploadedMediaArray = [{ url: gifUrl, mediaType: 'image', sortOrder: 0 }];
+
+      await api.post('/arena/posts', {
+        caption: caption.trim(), visibility: visibility,
+        media: uploadedMediaArray.length > 0 ? uploadedMediaArray : undefined
+      });
+      
+      setCaption(''); clearAttachment();
+      fetchFeed(true); 
+    } catch (err) {
+      alert("Failed to create post. Check your connection.");
+    } finally {
+      setIsPosting(false);
     }
   };
 
   return (
     <DashboardLayout>
-      <div 
-         ref={scrollContainerRef}
-         className="flex-1 h-full flex justify-center bg-gray-100 dark:bg-[#030303] overflow-y-auto scrollbar-hide relative transition-colors duration-300"
-      >
-        
-        {/* MAIN FEED COLUMN */}
-        <div className="w-full max-w-[640px] min-h-full flex flex-col pb-20 px-4 md:px-0 gap-6 relative">
+      <div ref={scrollContainerRef} className="flex-1 h-full w-full flex justify-center bg-gray-50 dark:bg-[#030303] overflow-y-auto scrollbar-hide relative transition-colors duration-300">
+        <div className="w-full max-w-[640px] h-max min-h-full flex flex-col pb-36 px-4 md:px-0 relative">
           
-          {/* SMART HEADER (Vanishes on scroll down) */}
-          <div className={`sticky top-4 z-50 transition-all duration-300 ease-in-out ${showHeader ? 'translate-y-0 opacity-100' : '-translate-y-[150%] opacity-0 pointer-events-none'}`}>
-              
-              {/* HEADER & TABS inside a floating glassmorphism pill */}
-              <div className="bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl border border-gray-200/50 dark:border-[#272729] rounded-[2rem] p-3 shadow-lg shadow-black/5 flex flex-col gap-3">
-                  <div className="flex items-center justify-between px-2">
-                     <div className="flex items-center gap-2">
-                         <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
-                            <TrendingUp size={16} strokeWidth={3} />
-                         </div>
-                         <h1 className="text-xl font-display font-extrabold text-gray-900 dark:text-white tracking-tight">The Arena</h1>
-                     </div>
-                     
-                     <div className="flex bg-gray-200/50 dark:bg-[#1a1a1a] p-1 rounded-xl shadow-inner border border-gray-300/50 dark:border-[#272729]">
-                       <button 
-                         onClick={() => { setActiveTab('pulse'); window.scrollTo({top: 0, behavior: 'smooth'}); }} 
-                         className={`px-4 py-1.5 text-xs font-extrabold rounded-lg transition-all ${activeTab === 'pulse' ? 'bg-white dark:bg-[#272729] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                       >
-                         Global Pulse
-                       </button>
-                       <button 
-                         onClick={() => { setActiveTab('network'); window.scrollTo({top: 0, behavior: 'smooth'}); }} 
-                         className={`px-4 py-1.5 text-xs font-extrabold rounded-lg transition-all ${activeTab === 'network' ? 'bg-white dark:bg-[#272729] text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                       >
-                         Your Network
-                       </button>
-                     </div>
-                  </div>
+          <div className={`sticky top-4 z-50 transition-all duration-300 ease-in-out mb-6 ${showHeader ? 'translate-y-0 opacity-100' : '-translate-y-[150%] opacity-0 pointer-events-none'}`}>
+            <div className="bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl border border-gray-200/50 dark:border-[#272729] rounded-[2rem] p-3 shadow-lg shadow-black/5 flex flex-col gap-3">
+              <div className="flex items-center justify-between px-2">
+                <div className="flex items-center gap-2">
+                   <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
+                      <TrendingUp size={16} strokeWidth={3} />
+                   </div>
+                   <h1 className="text-xl font-display font-extrabold text-gray-900 dark:text-white tracking-tight hidden sm:block">The Arena</h1>
+                </div>
+                <div className="relative flex bg-gray-200/50 dark:bg-[#1a1a1a] p-1 rounded-xl shadow-inner border border-gray-300/50 dark:border-[#272729] w-64">
+                  <div className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white dark:bg-[#272729] rounded-lg shadow-sm transition-transform duration-300 ease-out ${feedType === 'global' ? 'translate-x-0' : 'translate-x-full'}`}></div>
+                  <button onClick={() => { setFeedType('global'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`relative z-10 w-1/2 px-2 py-1.5 text-xs font-extrabold rounded-lg transition-colors duration-300 ${feedType === 'global' ? 'text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>Global Pulse</button>
+                  <button onClick={() => { setFeedType('network'); window.scrollTo({top: 0, behavior: 'smooth'}); }} className={`relative z-10 w-1/2 px-2 py-1.5 text-xs font-extrabold rounded-lg transition-colors duration-300 ${feedType === 'network' ? 'text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>Your Network</button>
+                </div>
               </div>
+            </div>
           </div>
 
-          {/* COMPOSER (Create Post) */}
-          <div className="p-5 rounded-[2rem] border border-gray-200 dark:border-[#272729] bg-white dark:bg-[#0f0f0f] shadow-sm flex flex-col gap-4 mt-2">
-            <div className="flex gap-4">
-               <div className="w-12 h-12 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden shrink-0 border border-gray-100 dark:border-[#343536]">
-                 <img src={user?.avatar_url || `https://ui-avatars.com/api/?name=${user?.name || 'U'}&background=random`} alt="Avatar" className="w-full h-full object-cover" />
-               </div>
-               <textarea 
-                 placeholder="Ignite a new discussion..." 
-                 className="w-full bg-transparent text-gray-900 dark:text-white text-lg resize-none focus:outline-none placeholder:text-gray-400 font-medium mt-2"
-                 rows={2}
-               />
+          {/* --- DEV TOOLS (For Testing UI without backend) --- */}
+          <div className="flex items-center justify-center gap-2 mb-2 flex-wrap">
+             <button 
+                onClick={() => setNewSparksAvatars(['https://ui-avatars.com/api/?name=Test1&background=random', 'https://ui-avatars.com/api/?name=Test2&background=random'])} 
+                className="text-[10px] font-extrabold uppercase tracking-widest bg-blue-500/10 text-blue-500 px-3 py-1.5 rounded-lg border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+             >
+                Test Pill Dropdown
+             </button>
+             <button 
+                onClick={() => {
+                   setPosts(prev => [{
+                      id: Math.random(), username: 'viral_user', displayName: 'Hot Sparker', avatarUrl: '',
+                      caption: 'This post was manually injected to test the High Heat UI! Notice the glowing orange border and the flame badge? 🔥',
+                      likeCount: 50, commentCount: 5, repostCount: 5, // Total 60 > 20 triggers High Heat
+                      createdAt: new Date().toISOString(), hasLiked: false, media: []
+                   }, ...prev]);
+                }} 
+                className="text-[10px] font-extrabold uppercase tracking-widest bg-orange-500/10 text-orange-500 px-3 py-1.5 rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-colors"
+             >
+                Test High Heat
+             </button>
+             <button 
+                onClick={() => navigate('/feed-mock')} 
+                className="text-[10px] font-extrabold uppercase tracking-widest bg-gray-500/10 text-gray-500 dark:text-gray-400 px-3 py-1.5 rounded-lg border border-gray-500/20 hover:bg-gray-500/20 transition-colors"
+             >
+                Go to Mock Feed
+             </button>
+          </div>
+
+          {newSparksAvatars.length > 0 && (
+            <div className="sticky top-[88px] z-40 flex justify-center -mt-2 mb-4 pointer-events-none">
+               <button 
+                 onClick={handleLoadNewSparks}
+                 className="pointer-events-auto bg-blue-500 text-white shadow-[0_8px_30px_rgba(59,130,246,0.4)] rounded-full pl-3 pr-4 py-1.5 flex items-center gap-2 hover:bg-blue-600 transition-all hover:-translate-y-1 active:scale-95 animate-in slide-in-from-top-4 fade-in duration-300 border border-blue-400"
+               >
+                  <ArrowUp size={16} strokeWidth={3} />
+                  <div className="flex -space-x-2">
+                     {newSparksAvatars.map((url, i) => (
+                        <img key={i} src={url} className="w-6 h-6 rounded-full border-2 border-blue-500 object-cover bg-white" alt="Avatar" />
+                     ))}
+                  </div>
+                  <span className="text-sm font-bold ml-1 tracking-wide">posted</span>
+               </button>
             </div>
-            <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-[#1a1a1a]">
-              <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500 mt-2">
-                <button className="p-2.5 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400 rounded-full transition-colors"><ImageIcon size={20} strokeWidth={2.5} /></button>
-                <button className="p-2.5 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400 rounded-full transition-colors"><Smile size={20} strokeWidth={2.5} /></button>
-                <button className="p-2.5 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400 rounded-full transition-colors"><Globe size={20} strokeWidth={2.5} /></button>
+          )}
+
+          <div className="p-5 rounded-[2rem] border border-gray-200 dark:border-[#272729] bg-white dark:bg-[#0f0f0f] shadow-sm flex flex-col gap-4 mb-6 relative z-10">
+            <div className="flex gap-4">
+              <div className="w-12 h-12 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden shrink-0 border border-gray-100 dark:border-[#343536]">
+                 <img src={currentUser?.avatar_url || `https://ui-avatars.com/api/?name=${currentUser?.name || 'U'}&background=random`} alt="You" className="w-full h-full object-cover" />
               </div>
-              <button className="px-6 py-2.5 mt-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-blue-600 dark:hover:bg-blue-500 hover:text-white font-extrabold rounded-full text-sm transition-all active:scale-95 shadow-md">
-                Post Spark
+              <div className="flex-1 pt-1">
+                <textarea value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Ignite a new discussion..." className="w-full bg-transparent text-gray-900 dark:text-white text-lg resize-none focus:outline-none placeholder:text-gray-400 font-medium min-h-[60px]"/>
+                {(gifUrl || imagePreview) && (
+                  <div className="relative mt-2 mb-2 inline-block">
+                    <img src={gifUrl || imagePreview} alt="Attachment" className="max-h-48 rounded-xl border border-gray-200 dark:border-[#272729] object-cover" />
+                    <button onClick={clearAttachment} className="absolute -top-2 -right-2 bg-gray-900 text-white rounded-full p-1 shadow-md hover:scale-110 transition-transform"><X size={14}/></button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-[#1a1a1a]">
+              <div className="flex items-center gap-1 text-gray-400 dark:text-gray-500 mt-2">
+                <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageSelect} />
+                <button onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors ${imageFile ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400' : 'hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400'}`}><ImageIcon size={20} strokeWidth={2.5} /></button>
+
+                <div className="relative" ref={gifMenuRef}>
+                  <button onClick={() => setShowGifPicker(!showGifPicker)} className={`p-2.5 rounded-full transition-colors flex items-center justify-center ${gifUrl ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400' : 'hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400'}`}>
+                     <div className="font-black text-[10px] border-2 border-current px-1 rounded flex items-center justify-center h-[18px]">GIF</div>
+                  </button>
+                  {showGifPicker && (
+                    <div className="absolute top-full left-0 mt-2 shadow-2xl rounded-2xl overflow-hidden bg-white dark:bg-[#1a1a1a] border border-gray-100 dark:border-[#272729] animate-in slide-in-from-top-2 duration-200 z-50">
+                       <GiphyPicker onSelect={(url) => { setGifUrl(url); setImageFile(null); setImagePreview(''); setShowGifPicker(false); }} />
+                    </div>
+                  )}
+                </div>
+
+                <button className="p-2.5 rounded-full transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"><Smile size={20} strokeWidth={2.5} /></button>
+
+                <button onClick={() => setVisibility(prev => prev === 'public' ? 'friends' : 'public')} className="p-2.5 rounded-full transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400 flex items-center gap-1.5 ml-1" title="Toggle Visibility">
+                   {visibility === 'public' ? <Globe size={20} strokeWidth={2.5} /> : <UserPlus size={20} strokeWidth={2.5} />}
+                   <span className="text-[12px] font-bold capitalize hidden sm:inline text-gray-600 dark:text-gray-400">{visibility}</span>
+                </button>
+              </div>
+
+              <button onClick={handlePostSubmit} disabled={(!caption.trim() && !gifUrl && !imageFile) || isPosting} className="px-6 py-2.5 mt-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-full text-sm transition-all active:scale-95 shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                {isPosting ? <Loader2 size={16} className="animate-spin" /> : "Post Spark"}
               </button>
             </div>
           </div>
 
-          {/* POSTS FEED */}
-          <div className="flex flex-col gap-6">
-            {activePosts.map((post) => (
-              <div 
-                key={post.id} 
-                className={`relative rounded-[2rem] p-5 transition-all duration-300 bg-white dark:bg-[#0f0f0f] border cursor-pointer hover:-translate-y-1 ${
-                  post.isHot 
-                    ? 'border-orange-500/30 dark:border-orange-500/20 shadow-[0_10px_30px_-10px_rgba(249,115,22,0.2)] dark:shadow-[0_10px_30px_-10px_rgba(249,115,22,0.1)]' 
-                    : 'border-gray-200 dark:border-[#272729] shadow-sm hover:shadow-md'
-                }`}
-              >
-                
-                {/* HOT POST GLOW INDICATOR */}
-                {post.isHot && (
-                  <div className="absolute -top-3 left-6 bg-gradient-to-r from-orange-500 to-red-500 text-white px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest flex items-center gap-1.5 shadow-lg shadow-orange-500/30">
-                    <Flame size={12} className="animate-pulse" /> High Heat
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between mb-4 mt-1">
-                   <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden shrink-0 border border-gray-100 dark:border-[#343536]">
-                        <img src={post.author.avatar} alt={post.author.name} className="w-full h-full object-cover" />
-                      </div>
-                      <div className="flex flex-col">
-                         <span className="font-bold text-[15px] text-gray-900 dark:text-white hover:underline leading-tight">{post.author.name}</span>
-                         <div className="flex items-center gap-1 text-[12px] text-gray-500 font-medium">
-                            <span>@{post.author.username}</span>
-                            <span>·</span>
-                            <span>{post.time}</span>
-                         </div>
-                      </div>
-                   </div>
-                   <button className="text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2"><MoreHorizontal size={20} /></button>
+          {loading ? (
+            <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
+          ) : posts.length === 0 ? (
+            <div className="text-center py-20 text-gray-500 font-medium">
+               <Sparkles size={32} className="mx-auto mb-4 text-gray-300 dark:text-gray-700" />
+               <p>The Arena is quiet today. Be the first to start a spark!</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {posts.map(post => <PostCard key={post.id} post={post} onDeleted={() => handlePostDeleted(post.id)} />)}
+              
+              {isLoadingMore && <div className="py-6 flex justify-center"><Loader2 className="animate-spin text-blue-500" size={24} /></div>}
+              {!hasMore && posts.length > 0 && (
+                <div className="py-10 flex flex-col items-center justify-center text-gray-400 dark:text-gray-600">
+                   <Sparkles size={28} className="mb-3" />
+                   <p className="text-sm font-extrabold uppercase tracking-widest">You've caught up with the pulse.</p>
                 </div>
-
-                <p className="text-[16px] text-gray-800 dark:text-gray-200 leading-relaxed whitespace-pre-wrap mb-4">
-                  {post.content}
-                </p>
-
-                {post.image && (
-                  <div className="w-full h-64 md:h-[350px] rounded-2xl overflow-hidden mb-4 border border-gray-100 dark:border-[#272729] shadow-inner">
-                    <img src={post.image} className="w-full h-full object-cover" alt="Post attachment" />
-                  </div>
-                )}
-
-                {/* ACTION BAR (Sparks & Ripples) */}
-                <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-[#1a1a1a]">
-                  
-                  {/* SPARK (Like Replacement) */}
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleSpark(post.id); }}
-                    className={`flex items-center gap-2 group transition-all px-3 py-1.5 rounded-full ${post.hasBacked ? 'bg-yellow-50 dark:bg-yellow-500/10 text-yellow-600 dark:text-yellow-500' : 'hover:bg-yellow-50 dark:hover:bg-yellow-500/10 text-gray-500 hover:text-yellow-500'}`}
-                  >
-                    {post.hasBacked ? (
-                      <Zap size={20} strokeWidth={2.5} className="fill-yellow-500 scale-110 transition-transform" />
-                    ) : (
-                      <Zap size={20} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                    )}
-                    <span className="text-sm font-extrabold">{post.sparks.toLocaleString()}</span>
-                  </button>
-
-                  {/* Ripple (Comment/Reply) */}
-                  <button className="flex items-center gap-2 group hover:text-blue-500 text-gray-500 transition-colors px-3 py-1.5 rounded-full hover:bg-blue-50 dark:hover:bg-blue-500/10">
-                    <MessageCircle size={20} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                    <span className="text-sm font-bold">{post.ripples.toLocaleString()}</span>
-                  </button>
-
-                  {/* Repost */}
-                  <button className="flex items-center gap-2 group hover:text-green-500 text-gray-500 transition-colors px-3 py-1.5 rounded-full hover:bg-green-50 dark:hover:bg-green-500/10">
-                    <Repeat2 size={20} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                  </button>
-
-                  {/* Share */}
-                  <button className="flex items-center gap-2 group hover:text-purple-500 text-gray-500 transition-colors px-3 py-1.5 rounded-full hover:bg-purple-50 dark:hover:bg-purple-500/10">
-                    <Share2 size={20} strokeWidth={2} className="group-hover:scale-110 transition-transform" />
-                  </button>
-
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="py-10 flex flex-col items-center justify-center text-gray-500">
-             <Sparkles size={28} className="mb-3 text-gray-400" />
-             <p className="text-sm font-extrabold uppercase tracking-widest">You've caught up with the pulse.</p>
-          </div>
+              )}
+            </div>
+          )}
 
         </div>
       </div>

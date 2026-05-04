@@ -18,6 +18,10 @@ import Labs from './pages/Labs';
 import JoinGroup from './pages/JoinGroup';
 import Donations from './pages/Donations';
 import Feeds from './pages/Feeds';
+import PostDetail from './pages/PostDetail';
+import FeedMock from './pages/feed_mock';
+import Bookmarks from './pages/Bookmarks';
+
 
 
 // Helper Component to Protect Routes
@@ -90,6 +94,8 @@ function App() {
           } 
         />
 
+        <Route path="/profile/:username" element={<Profile />} />
+
         {/* FIX: Added ProtectedRoute wrapper to Friends */}
         <Route 
           path="/friends" 
@@ -128,6 +134,9 @@ function App() {
         />
 
         <Route path="/feeds" element={<Feeds />} />
+        <Route path="/feed-mock" element={<FeedMock />} />
+        <Route path="/post/:postId" element={<PostDetail />} />
+        <Route path="/bookmarks" element={<Bookmarks />} />
 
         <Route 
           path="/live" 

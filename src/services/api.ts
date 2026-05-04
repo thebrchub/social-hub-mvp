@@ -132,19 +132,24 @@ const handleLogout = () => {
 };
 
 // Exported API methods
+// src/services/api.ts
+// ... (keep all your existing fetchWrapper and queue logic)
+
 export const api = {
-  get: (endpoint: string) => 
-    fetchWrapper(endpoint, { method: 'GET' }),
-    
-  post: (endpoint: string, body?: any) => 
-    fetchWrapper(endpoint, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
-    
-  patch: (endpoint: string, body?: any) => 
-    fetchWrapper(endpoint, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
-    
-  put: (endpoint: string, body?: any) => 
-    fetchWrapper(endpoint, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
-    
-  delete: (endpoint: string) => 
-    fetchWrapper(endpoint, { method: 'DELETE' }),
+  get: (endpoint: string) => fetchWrapper(endpoint, { method: 'GET' }),
+  post: (endpoint: string, body?: any) => fetchWrapper(endpoint, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+  patch: (endpoint: string, body?: any) => fetchWrapper(endpoint, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+  put: (endpoint: string, body?: any) => fetchWrapper(endpoint, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
+  delete: (endpoint: string) => fetchWrapper(endpoint, { method: 'DELETE' }),
+  
+  // NEW: Raw upload for Presigned URLs (Bypasses the wrapper and tokens)
+  putFile: async (uploadUrl: string, file: File, contentType: string) => {
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`Upload failed with status: ${res.status}`);
+    return res;
+  }
 };

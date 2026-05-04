@@ -1,5 +1,5 @@
 import { type ReactNode, useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { MessageSquare, Heart, Users, LogOut, Settings, Bell, Menu, Search, Home, Loader2, UserPlus, Zap, Video, Rocket, X, CheckCircle2, AlertTriangle, Sun, Moon, Lock, Globe, Volume2, Play } from 'lucide-react';
+import { MessageSquare, Heart, Users, LogOut, Settings, Bell, Menu, Search, Home, Loader2, UserPlus, Zap, Video, Rocket, X, CheckCircle2, AlertTriangle, Sun, Moon, Lock, Globe, Volume2, Play, Bookmark } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import AdCard from '../components/AdCard';
 import { useAuthStore } from '../store/useAuthStore';
@@ -19,8 +19,10 @@ interface DashboardLayoutProps { children: ReactNode; }
 interface LayoutCacheState {
   cachedRequestsCount: number;
   hasFetched: boolean;
+  hasFetchedFriends: boolean; // <-- NEW
   hasSeenRequests: boolean;
   setRequestsData: (count: number) => void;
+  setFetchedFriends: () => void; // <-- NEW
   markRequestsSeen: () => void;
   resetDot: () => void;
 }
@@ -28,8 +30,10 @@ interface LayoutCacheState {
 const useLayoutCache = create<LayoutCacheState>((set) => ({
   cachedRequestsCount: 0,
   hasFetched: false,
+  hasFetchedFriends: false, // <-- NEW
   hasSeenRequests: false,
   setRequestsData: (count) => set({ cachedRequestsCount: count, hasFetched: true }),
+  setFetchedFriends: () => set({ hasFetchedFriends: true }), // <-- NEW
   markRequestsSeen: () => set({ hasSeenRequests: true }),
   resetDot: () => set({ hasSeenRequests: false }),
 }));
@@ -49,7 +53,16 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const { subscribe } = useWebSocket(); 
   const { theme, toggleTheme } = useThemeStore();
   usePushNotifications();
-  const { cachedRequestsCount, hasFetched, hasSeenRequests, setRequestsData, markRequestsSeen, resetDot } = useLayoutCache();
+  const { 
+    cachedRequestsCount, 
+    hasFetched, 
+    hasSeenRequests, // <-- I accidentally told you to delete this one!
+    hasFetchedFriends, 
+    setRequestsData, 
+    setFetchedFriends, 
+    markRequestsSeen, 
+    resetDot 
+  } = useLayoutCache();
 
   const currentYear = new Date().getFullYear();
 
@@ -211,7 +224,13 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [mobileSearchOpen]);
 
-  useEffect(() => { if (user) fetchFriends(); }, [user, fetchFriends]);
+  // Fetch friends ONLY on first load. WebSockets/Actions handle the rest!
+  useEffect(() => { 
+    if (user && !hasFetchedFriends) { 
+      fetchFriends(); 
+      setFetchedFriends(); 
+    } 
+  }, [user, hasFetchedFriends, fetchFriends, setFetchedFriends]);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
@@ -420,10 +439,17 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                <div className={`px-4 mb-3 transition-all duration-300 ${isSidebarCollapsed ? 'md:opacity-0 md:h-0 md:overflow-hidden md:mb-0' : 'opacity-100 h-auto'}`}><span className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest pl-3">Social Hangout</span></div>
                <nav className="space-y-1 px-2 shrink-0">
                   <NavItem collapsed={isSidebarCollapsed} icon={<Zap size={22} strokeWidth={2.5} />} label="Stranger Chat" active={location.pathname === '/matches'} onClick={() => { navigate('/matches'); setMobileMenuOpen(false); }} />
-                  <NavItem collapsed={isSidebarCollapsed} icon={<Video size={22} strokeWidth={2.5} />} label="Stranger Cam" active={location.pathname === '/vid-matches'} onClick={() => { navigate('/vid-matches'); setMobileMenuOpen(false); }} badge="HOT" />
+                  {/* <NavItem collapsed={isSidebarCollapsed} icon={<Video size={22} strokeWidth={2.5} />} label="Stranger Cam" active={location.pathname === '/vid-matches'} onClick={() => { navigate('/vid-matches'); setMobileMenuOpen(false); }} badge="HOT" /> */}
                   <NavItem collapsed={isSidebarCollapsed} icon={<MessageSquare size={22} strokeWidth={2.5} />} label="Messages" active={location.pathname === '/chats'} onClick={() => { navigate('/chats'); setMobileMenuOpen(false); }} badge={unreadChatsCount > 0 ? unreadChatsCount : undefined} />
                   
                   <NavItem collapsed={isSidebarCollapsed} icon={<Users size={22} strokeWidth={2.5} />} label="Connections" active={location.pathname === '/friends'} onClick={() => { navigate('/friends'); setMobileMenuOpen(false); }} badge={pendingFriendsCount > 0 ? pendingFriendsCount : undefined} />
+                  <NavItem 
+                    collapsed={isSidebarCollapsed} 
+                    icon={<Bookmark size={22} strokeWidth={2.5} />} 
+                    label="Bookmarks" 
+                    active={location.pathname === '/bookmarks'} 
+                    onClick={() => { navigate('/bookmarks'); setMobileMenuOpen(false); }} 
+                  />
                   
                   <NavItem collapsed={isSidebarCollapsed} icon={<Settings size={22} strokeWidth={2.5} />} label="Settings" active={location.pathname === '/settings'} onClick={() => { navigate('/settings'); setMobileMenuOpen(false); }} />
                </nav>
@@ -439,10 +465,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                             Log Out<div className="absolute top-1/2 -translate-y-1/2 -left-[4px] border-y-[5px] border-y-transparent border-r-[5px] border-r-gray-900 dark:border-r-white"></div>
                         </div>
                     )}
-                    <button onClick={handleLogout} className={`flex items-center transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'md:justify-center md:px-0 px-4' : 'px-4 gap-4'} text-red-600 dark:text-red-500 border border-transparent hover:bg-white dark:hover:bg-[#3f1616] hover:border-red-200 dark:hover:border-[#5c1c1c] hover:-translate-y-0.5 w-full py-3 rounded-2xl overflow-hidden font-bold`}>
-                       <div className="shrink-0 flex items-center justify-center w-6"><LogOut size={22} strokeWidth={2.5} /></div>
-                       <span className={`text-sm whitespace-nowrap transition-all duration-300 origin-left flex-1 text-left ${isSidebarCollapsed ? 'md:opacity-0 md:w-0 md:h-0 md:flex-none md:overflow-hidden md:scale-95' : 'opacity-100 scale-100'}`}>Log Out</span>
-                    </button>
+                   
                 </div>
              </div>
           </aside>
