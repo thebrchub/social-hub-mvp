@@ -1,5 +1,5 @@
 import { type ReactNode, useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { MessageSquare, Heart, Users, LogOut, Settings, Bell, Menu, Search, Home, Loader2, UserPlus, Zap, Video, Rocket, X, CheckCircle2, AlertTriangle, Sun, Moon, Lock, Globe, Volume2, Play, Bookmark } from 'lucide-react';
+import { MessageSquare, Heart, Users, Settings, Bell, Menu, Search, Home, Loader2, UserPlus, Zap, Rocket, X, CheckCircle2, AlertTriangle, Sun, Moon, Lock, Globe, Volume2, Play, Bookmark } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import AdCard from '../components/AdCard';
 import { useAuthStore } from '../store/useAuthStore';
@@ -43,7 +43,6 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const location = useLocation();
   
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   
   const unreadCount = useNotificationStore((state) => state.unreadCount);
   const unreadChatsCount = useNotificationStore((state) => state.unreadChatsCount);
@@ -199,10 +198,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const searchRef = useRef<HTMLFormElement>(null);
   const mobileSearchRef = useRef<HTMLFormElement>(null);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
+
 
   const clearAndCloseMobileSearch = () => {
     setSearchQuery('');
