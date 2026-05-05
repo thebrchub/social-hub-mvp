@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'; // ADDED NAVIGATE
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import PostCard, { type Post } from '../components/feed/PostCard';
-import { Loader2, Image as ImageIcon, Smile, Globe, Send, X, UserPlus, TrendingUp, Sparkles, ArrowUp } from 'lucide-react';
+import { Loader2, Image as ImageIcon, Smile, Globe, X, UserPlus, TrendingUp, Sparkles, ArrowUp } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { GiphyFetch } from '@giphy/js-fetch-api';
 import { Grid } from '@giphy/react-components';

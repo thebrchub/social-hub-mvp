@@ -99,7 +99,7 @@ export default function PostDetail() {
   const [postHasReposted, setPostHasReposted] = useState(false);
   const [postRepostCount, setPostRepostCount] = useState(0);
   const [isPostReposting, setIsPostReposting] = useState(false);
-  const [myRepostId, setMyRepostId] = useState<number | null>(null);
+
 
   const [showPostMenu, setShowPostMenu] = useState(false);
   const [showRippleMenu, setShowRippleMenu] = useState(false);
@@ -783,7 +783,7 @@ export default function PostDetail() {
       </div>
 
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} username={post.username} />
-      <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={post} onSuccess={(newId) => { setPostHasReposted(true); setPostRepostCount(prev => prev + 1); if (newId) setMyRepostId(newId); }} />
+      <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={post} onSuccess={() => { setPostHasReposted(true); setPostRepostCount(prev => prev + 1); }} />
       <ShareToChatModal isOpen={isShareChatModalOpen} onClose={() => setIsShareChatModalOpen(false)} post={post} />
 
       {/* --- LIKERS / REPOSTERS MODAL --- */}

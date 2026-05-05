@@ -218,7 +218,7 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
   const [hasReposted, setHasReposted] = useState(targetPost.hasReposted || false);
   const [repostCount, setRepostCount] = useState(targetPost.repostCount || 0);
   const [isReposting, setIsReposting] = useState(false);
-  const [myRepostId, setMyRepostId] = useState<number | null>(null);
+
 
   const [showPostMenu, setShowPostMenu] = useState(false);
   const [showRippleMenu, setShowRippleMenu] = useState(false);
@@ -227,7 +227,7 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
   const [isShareChatModalOpen, setIsShareChatModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [showCopiedToast, setShowCopiedToast] = useState(false); 
+
   const [isFriend, setIsFriend] = useState(false);
   const [friendRequested, setFriendRequested] = useState(false);
 
@@ -279,15 +279,13 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
         await api.delete(`/arena/posts/${targetPost.id}/repost`); 
         setHasReposted(false); 
         setRepostCount(prev => Math.max(0, prev - 1)); 
-        if (typeof setMyRepostId === 'function') setMyRepostId(null);
+        
       } catch {
         alert("Failed to undo ripple.");
       }
     } else {
       try {
-        const res = await api.post(`/arena/posts/${targetPost.id}/repost`, { caption: "" });
-        const newRippleId = res.id || res.postId || (res.data && res.data.id); 
-        if (newRippleId && typeof setMyRepostId === 'function') setMyRepostId(newRippleId);
+        await api.post(`/arena/posts/${targetPost.id}/repost`, { caption: "" });
         
         setHasReposted(true); 
         setRepostCount(prev => prev + 1);
@@ -388,12 +386,14 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
 
   const getPostUrl = () => `${window.location.origin}/post/${targetPost.id}`;
 
-  const handleCopyLink = (e: React.MouseEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    navigator.clipboard.writeText(getPostUrl()).then(() => {
-      setShowCopiedToast(true); setShowShareMenu(false); setTimeout(() => setShowCopiedToast(false), 2500);
-    }).catch(() => alert("Failed to copy link."));
-  };
+  // Change this function
+const handleCopyLink = (e: React.MouseEvent) => {
+  e.preventDefault(); e.stopPropagation();
+  navigator.clipboard.writeText(getPostUrl()).then(() => {
+    showLocalToast("Link copied to clipboard", "check"); // <-- Use the new toast!
+    setShowShareMenu(false);
+  }).catch(() => alert("Failed to copy link."));
+};
 
   const handleNativeShare = async (e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation(); setShowShareMenu(false);
@@ -698,7 +698,7 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
         </div>
       </div>
 
-      <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={targetPost} onSuccess={(newId) => { setHasReposted(true); setRepostCount(prev => prev + 1); if (newId) setMyRepostId(newId); }} />
+      <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={targetPost} onSuccess={() => { setHasReposted(true); setRepostCount(prev => prev + 1); }} />
       <ShareToChatModal isOpen={isShareChatModalOpen} onClose={() => setIsShareChatModalOpen(false)} post={targetPost} />
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} username={post.username} />
     </>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useLayoutEffect } from 'react';
+import { useEffect, useState, useRef, } from 'react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import {
   MessageSquare, Users, Loader2, FlaskConical,
@@ -118,7 +118,7 @@ const Dashboard = () => {
   const posts = feedType === 'global' ? feedStore.globalPosts : feedStore.networkPosts;
   const hasMore = feedType === 'global' ? feedStore.globalHasMore : feedStore.networkHasMore;
   const currentCursor = feedType === 'global' ? feedStore.globalCursor : feedStore.networkCursor;
-  const currentScroll = feedStore.scrollPositions[feedType];
+
 
   const [feedLoading, setFeedLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);

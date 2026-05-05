@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Mail, Calendar, Phone, Shield, Globe, Loader2, Edit3, Save, Eye, EyeOff, UserCircle, MoreHorizontal, MapPin, Link as LinkIcon, MessageCircle, Zap, UserPlus } from 'lucide-react';
+import { ArrowLeft, Mail, Calendar, Phone, Shield, Globe, Loader2, Edit3,  Eye, EyeOff, UserCircle, MoreHorizontal,  MessageCircle, Zap, UserPlus } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
