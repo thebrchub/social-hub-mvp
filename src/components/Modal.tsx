@@ -28,32 +28,32 @@ const Modal = ({ isOpen, onClose, title, children, footer }: ModalProps) => {
     <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6">
       {/* Overlay backdrop */}
       <div 
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity animate-in fade-in duration-200"
+        className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm transition-opacity animate-in fade-in duration-200"
         onClick={onClose}
       ></div>
 
       {/* Modal Box */}
-      <div className="relative w-full max-w-md bg-[#1a1a1a] border border-[#272729] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-md bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-[#272729] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#272729] bg-[#111]">
-          <h3 className="text-lg font-bold text-white">{title}</h3>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-[#272729] bg-gray-50 dark:bg-[#111]">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">{title}</h3>
           <button 
             onClick={onClose}
-            className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
+            className="p-1.5 bg-gray-200/50 hover:bg-gray-200 dark:bg-white/5 dark:hover:bg-white/10 rounded-full text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* Body */}
-        <div className="px-6 py-6 text-gray-300 text-sm leading-relaxed">
+        <div className="px-6 py-6 text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
           {children}
         </div>
 
         {/* Footer (Optional) */}
         {footer && (
-          <div className="px-6 py-4 border-t border-[#272729] bg-[#111] flex justify-end gap-3">
+          <div className="px-6 py-4 border-t border-gray-100 dark:border-[#272729] bg-gray-50 dark:bg-[#111] flex justify-end gap-3">
             {footer}
           </div>
         )}

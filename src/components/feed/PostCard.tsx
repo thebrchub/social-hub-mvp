@@ -7,6 +7,8 @@ import ReportModal from '../ReportModal';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useBookmarkStore } from '../../store/useBookmarkStore';
+import MediaGrid from '../MediaGrid'; 
+import CarouselModal from '../CarouselModal'; 
 
 export interface MediaItem {
   url: string;
@@ -223,6 +225,9 @@ export default function PostCard({ post, isProfileView = false, isOwnProfile = f
   const [showPostMenu, setShowPostMenu] = useState(false);
   const [showRippleMenu, setShowRippleMenu] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
+
+  const [isCarouselOpen, setIsCarouselOpen] = useState(false);
+const [carouselStartIndex, setCarouselStartIndex] = useState(0);
   
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
   const [isShareChatModalOpen, setIsShareChatModalOpen] = useState(false);
@@ -591,13 +596,13 @@ const handleCopyLink = (e: React.MouseEvent) => {
           </div>
         )}
 
-        {displayMedia && displayMedia.length > 0 && (
-          <div className="w-full h-64 md:h-[350px] rounded-2xl overflow-hidden mb-4 border border-gray-100 dark:border-[#272729] bg-black">
-            {displayMedia[0].mediaType === 'video'
-              ? <video src={displayMedia[0].url} controls onClick={(e) => e.stopPropagation()} className="w-full h-full object-cover" />
-              : <img src={displayMedia[0].url} alt="Post media" className="w-full h-full object-cover" loading="lazy" />}
-          </div>
-        )}
+       <MediaGrid 
+  media={displayMedia} 
+  onMediaClick={(index) => {
+    setCarouselStartIndex(index);
+    setIsCarouselOpen(true);
+  }} 
+/>
 
         {/* ── Engagement bar ── */}
         <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-[#1a1a1a] text-gray-400 dark:text-gray-500">
@@ -701,6 +706,12 @@ const handleCopyLink = (e: React.MouseEvent) => {
       <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={targetPost} onSuccess={() => { setHasReposted(true); setRepostCount(prev => prev + 1); }} />
       <ShareToChatModal isOpen={isShareChatModalOpen} onClose={() => setIsShareChatModalOpen(false)} post={targetPost} />
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} username={post.username} />
+        <CarouselModal 
+  isOpen={isCarouselOpen}
+  media={displayMedia}
+  initialIndex={carouselStartIndex}
+  onClose={() => setIsCarouselOpen(false)}
+/>
     </>
   );
 }
