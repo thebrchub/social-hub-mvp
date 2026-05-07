@@ -9,7 +9,7 @@ interface CarouselModalProps {
   onClose: () => void;
 }
 
-export default function CarouselModal({ isOpen, media, initialIndex, onClose }: CarouselModalProps) {
+export default function CarouselModal({ isOpen, media = [], initialIndex, onClose }: CarouselModalProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
 
   // Sync index when modal opens

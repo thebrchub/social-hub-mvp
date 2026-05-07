@@ -706,12 +706,14 @@ const handleCopyLink = (e: React.MouseEvent) => {
       <QuoteRippleModal isOpen={isQuoteModalOpen} onClose={() => setIsQuoteModalOpen(false)} post={targetPost} onSuccess={() => { setHasReposted(true); setRepostCount(prev => prev + 1); }} />
       <ShareToChatModal isOpen={isShareChatModalOpen} onClose={() => setIsShareChatModalOpen(false)} post={targetPost} />
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} username={post.username} />
-        <CarouselModal 
-  isOpen={isCarouselOpen}
-  media={displayMedia}
-  initialIndex={carouselStartIndex}
-  onClose={() => setIsCarouselOpen(false)}
-/>
+        {displayMedia && displayMedia.length > 0 && (
+  <CarouselModal 
+    isOpen={isCarouselOpen}
+    media={displayMedia}
+    initialIndex={carouselStartIndex}
+    onClose={() => setIsCarouselOpen(false)}
+  />
+)}
     </>
   );
 }
